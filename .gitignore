@@ -11,3 +11,9 @@ build/
 .DS_Store
 /.claude/settings.local.json
 /.mcp.json
+
+# Release signing key: never commit
+keystore.properties
+*.jks
+*.keystore
+/nexApp/release/
