@@ -1,0 +1,9 @@
+<!-- Overrides the core's notification / Android Auto glyph with the NexMusic mark. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="256" android:viewportHeight="256">
+    <group android:pivotX="128" android:pivotY="128" android:scaleX="1.15" android:scaleY="1.15">
+        <path android:fillColor="#FFFFFF" android:strokeColor="#FFFFFF" android:strokeWidth="28" android:strokeLineJoin="round" android:pathData="M68,74V188H146Z" />
+        <path android:fillColor="#FFFFFF" android:pathData="M186,54a16,16 0 0 1 16,16v116a16,16 0 0 1 -32,0v-116a16,16 0 0 1 16,-16z" />
+    </group>
+</vector>

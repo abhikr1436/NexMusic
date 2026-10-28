@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">NexMusic</string>
+    <!-- Overrides the shared core's channel name. -->
+    <string name="notification_channel_name" translatable="false">NexMusic playback</string>
+    <string name="island_service_label">NexMusic Dynamic Island</string>
+    <string name="island_service_description">Shows the song that is playing in a Dynamic Island around the front camera. NexMusic uses this only to draw the island above the status bar; it does not read your screen or what you type.</string>
+</resources>

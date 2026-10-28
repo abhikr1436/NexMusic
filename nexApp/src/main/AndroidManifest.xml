@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="androidx.car.app.MEDIA_TEMPLATES" />
+
+    <uses-feature android:name="android.hardware.type.automotive" android:required="false" />
+    <uses-feature android:name="android.software.car.templates_host.media" android:required="false" />
+
+    <application
+        android:name=".NexApplication"
+        android:allowBackup="true"
+        android:appCategory="audio"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.NexMusic"
+        android:enableOnBackInvokedCallback="true"
+        tools:replace="android:name,android:label,android:icon,android:roundIcon,android:theme"
+        tools:targetApi="tiramisu">
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="keyboardHidden|screenSize|screenLayout|smallestScreenSize|orientation|uiMode"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <action android:name="android.intent.action.MUSIC_PLAYER" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.APP_MUSIC" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <!-- Car host asks to show the playback screen -->
+            <intent-filter>
+                <action android:name="androidx.car.app.media.action.SHOW_MEDIA_PLAYBACK" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Playback + Android Auto browse tree (search, library, home) live in the shared core. -->
+        <service
+            android:name="com.maxrave.media3.service.SimpleMediaService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback"
+            android:stopWithTask="false"
+            tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="androidx.media3.session.MediaLibraryService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </service>
+        <service
+            android:name="com.maxrave.media3.service.download.MusicDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- Dynamic Island: an accessibility overlay is the only window that can sit around the camera, above the status bar. -->
+        <service
+            android:name=".island.IslandService"
+            android:exported="false"
+            android:label="@string/island_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/island_service" />
+        </service>
+
+        <receiver
+            android:name="androidx.media3.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Android Auto -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+        <meta-data
+            android:name="androidx.car.app.minCarApiLevel"
+            android:value="8" />
+        <meta-data
+            android:name="androidx.car.app.TintableAttributionIcon"
+            android:resource="@drawable/mono" />
+        <service
+            android:name="com.maxrave.media3.carapp.SimpMusicCarAppService"
+            android:exported="true"
+            tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <action android:name="androidx.car.app.media.action.SHOW_MEDIA_PLAYBACK" />
+                <category android:name="androidx.car.app.category.MEDIA" />
+            </intent-filter>
+        </service>
+
+        <meta-data android:name="io.sentry.auto-init" android:value="false" />
+    </application>
+</manifest>
