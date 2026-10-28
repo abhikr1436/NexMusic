@@ -24,4 +24,4 @@ NexMusic: an Android-only music streaming app (package `com.nexmusic.app`) with 
 ## Known gaps
 - Release build: no minification, signed with the debug key.
 - Not built: YouTube sign-in, creating playlists, settings, Radio tab.
-- Dynamic Island (`island/DynamicIsland.kt`) is a `SYSTEM_ALERT_WINDOW` overlay below the status bar (the status bar sits above app overlays and eats touches there).
+- Dynamic Island (`island/`): drawn by an accessibility service (`IslandService`, `TYPE_ACCESSIBILITY_OVERLAY`), the only window type above the status bar that takes touches there. It centres on the display cutout (`cutoutPath` on API 31+). The service being enabled is the Library toggle.
