@@ -264,6 +264,9 @@ internal class DownloadUtils(
         }
     }
 
+    // DownloadManager only reports state changes, so the UI polls this for the percentage.
+    override fun progress(videoId: String): Float = downloadManager.currentDownloads.firstOrNull { it.request.id == videoId }?.percentDownloaded ?: -1f
+
     override fun removeDownload(videoId: String) {
         DownloadService.sendRemoveDownload(
             context,

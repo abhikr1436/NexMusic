@@ -1173,10 +1173,11 @@ internal class MediaServiceHandlerImpl(
                 if (id.contains("Video")) {
                     id = id.removePrefix("Video")
                 }
-                songRepository.updateLikeStatus(
-                    id,
-                    if (!(controlState.first().isLiked)) 1 else 0,
-                )
+                // Flip what the row says, not controlState: that copy can be stale, and then a tap rewrote the same value.
+                val liked = songRepository.getSongById(id).singleOrNull()?.liked ?: controlState.first().isLiked
+                songRepository.updateLikeStatus(id, if (liked) 0 else 1)
+                // Re-reads the row into controlState and the notification's heart, so the UI flips at once.
+                updateNotification()
                 delay(200)
             }
     }
@@ -2772,6 +2773,8 @@ internal class MediaServiceHandlerImpl(
         mediaItem: GenericMediaItem?,
         reason: Int,
     ) {
+        // Nothing else moved this on a track change, so "Playing Next" kept showing the song already playing.
+        _currentSongIndex.value = player.currentMediaItemIndex
         Logger.w(TAG, "Checking current state before transition ${simpleMediaState.value}")
         val lastPlayed = nowPlayingState.value.songEntity
         val currentState = simpleMediaState.value

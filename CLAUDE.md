@@ -28,5 +28,5 @@ NexMusic: an Android-only music streaming app (package `com.nexmusic.app`) with 
 - After a shrinking problem, check `nexApp/build/outputs/mapping/release/` and add a keep rule rather than turning R8 off.
 
 ## Known gaps
-- Not built: YouTube sign-in, creating playlists, settings, Radio tab.
-- Dynamic Island (`island/`): drawn by an accessibility service (`IslandService`, `TYPE_ACCESSIBILITY_OVERLAY`), the only window type above the status bar that takes touches there. It centres on the display cutout (`cutoutPath` on API 31+). The service being enabled is the Library toggle.
+- Not built: YouTube sign-in, settings, Radio tab. User playlists are local only (`LocalPlaylistRepository`), not synced to YouTube.
+- Many core reads are one-shot, not Room Flows. Saved albums/playlists/artists and local playlists: writes must call `LibraryChanges.bump()` (ViewModels.kt). Liked/downloaded songs: wrap the read in `onSongChange { }` so it re-runs on song-table writes. Otherwise lists go stale.

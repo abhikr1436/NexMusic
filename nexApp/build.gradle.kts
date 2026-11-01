@@ -97,6 +97,8 @@ dependencies {
     implementation(libs.koin.android)
     implementation(libs.koin.androidx.compose)
 
+    implementation(libs.liquid.glass)
+    implementation(libs.liquid.glass.shape)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.coroutines.android)

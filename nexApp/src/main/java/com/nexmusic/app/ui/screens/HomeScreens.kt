@@ -99,7 +99,7 @@ fun HomeScreen() {
                 LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(shown.size) { i ->
                         val s = shown[i]
-                        CoverCard(s.thumbnails?.hiRes(), s.title, s.artistName?.joinToString(), 160.dp) { player.playList(recent.toArrayListTrack(), i, "Recently Played", null) }
+                        CoverCard(s.thumbnails?.hiRes(), s.title, s.artistName?.joinToString(), 160.dp, videoId = s.videoId) { player.playList(recent.toArrayListTrack(), i, "Recently Played", null) }
                     }
                 }
             }
@@ -112,7 +112,21 @@ fun NewScreen() {
     val vm: HomeViewModel = koinViewModel()
     LaunchedEffect(Unit) { vm.ensureNew() }
     val feed by vm.newReleases.collectAsStateWithLifecycle()
-    FeedPage("New", "new", feed, onRetry = vm::refreshNew)
+    val forYou by vm.newForYou.collectAsStateWithLifecycle()
+    val navigator = LocalNavigator.current
+    FeedPage("New", "new", feed, onRetry = vm::refreshNew) {
+        if (forYou.isNotEmpty()) {
+            item(key = "h-foryou") { SectionHeader("New From Your Artists", "Based on what you've been playing") }
+            item(key = "c-foryou") {
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(forYou.size) { i ->
+                        val r = forYou[i]
+                        CoverCard(r.art, r.title, listOf(r.artist, r.year).filter { it.isNotBlank() }.joinToString(" · "), 160.dp) { navigator.album(r.browseId) }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

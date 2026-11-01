@@ -1,6 +1,27 @@
 package com.nexmusic.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import com.nexmusic.app.ui.components.Artwork
+import com.nexmusic.app.ui.components.NewPlaylistDialog
+import com.nexmusic.app.ui.icon.Add
+import com.nexmusic.app.ui.theme.Accent
+import com.nexmusic.app.ui.theme.LocalNex
+import com.nexmusic.app.ui.theme.NexType
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,19 +32,15 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.utils.toArrayListTrack
 import com.nexmusic.app.ui.BottomChromePadding
 import com.maxrave.domain.utils.toTrack
-import com.nexmusic.app.island.DynamicIsland
 import com.nexmusic.app.ui.LocalNavigator
 import com.nexmusic.app.ui.rememberTabListState
 import com.nexmusic.app.ui.components.CapsuleButton
@@ -38,7 +55,6 @@ import com.nexmusic.app.ui.components.hiRes
 import com.nexmusic.app.ui.icon.Album
 import com.nexmusic.app.ui.icon.Downloaded
 import com.nexmusic.app.ui.icon.History
-import com.nexmusic.app.ui.icon.Island
 import com.nexmusic.app.ui.icon.MusicNote
 import com.nexmusic.app.ui.icon.NexIcons
 import com.nexmusic.app.ui.icon.Person
@@ -46,7 +62,6 @@ import com.nexmusic.app.ui.icon.PlayArrow
 import com.nexmusic.app.ui.icon.QueueMusic
 import com.nexmusic.app.ui.icon.Shuffle
 import com.nexmusic.app.ui.icon.TrendingUp
-import com.nexmusic.app.ui.theme.IosGreen
 import org.koin.androidx.compose.koinViewModel
 
 private data class Kind(
@@ -82,15 +97,6 @@ fun LibraryScreen() {
         item { Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars)) }
         item { LargeTitle("Library") }
         kinds.forEachIndexed { i, k -> item { ListLink(icons[i], k.title) { navigator.library(k.route) } } }
-        item {
-            val context = LocalContext.current
-            val island by DynamicIsland.enabled.collectAsStateWithLifecycle()
-            ListLink(
-                NexIcons.Island,
-                "Dynamic Island",
-                trailing = { Switch(island, onCheckedChange = null, colors = SwitchDefaults.colors(checkedTrackColor = IosGreen, checkedBorderColor = IosGreen)) },
-            ) { if (island) DynamicIsland.turnOff() else DynamicIsland.turnOn(context) }
-        }
         item { SectionHeader("Recently Added") }
         if (recentlyAdded.isEmpty()) item { Message("Albums and playlists you add show up here.") }
         items(recentlyAdded.chunked(2)) { pair ->
@@ -118,6 +124,9 @@ fun LibraryListScreen(kind: String) {
     val artists by vm.followedArtists.collectAsStateWithLifecycle()
     val albums by vm.savedAlbums.collectAsStateWithLifecycle()
     val playlists by vm.savedPlaylists.collectAsStateWithLifecycle()
+    val mine by vm.myPlaylists.collectAsStateWithLifecycle()
+    var naming by remember { mutableStateOf(false) }
+    if (naming) NewPlaylistDialog({ naming = false }) { vm.create(it) }
     val liked by vm.liked.collectAsStateWithLifecycle()
     val downloaded by vm.downloaded.collectAsStateWithLifecycle()
     val recentlyPlayed by vm.recentlyPlayed.collectAsStateWithLifecycle()
@@ -139,8 +148,13 @@ fun LibraryListScreen(kind: String) {
                 items(list) { SongRow(it.title, it.artistName?.joinToString(), it.thumbnails?.hiRes(), onClick = { navigator.album(it.browseId) }) }
             }
             "playlists" -> {
+                item { ListLink(NexIcons.Add, "New Playlist…", trailing = {}) { naming = true } }
+                items(mine, key = { "mine-${it.id}" }) { p ->
+                    val n = p.tracks?.size ?: 0
+                    SongRow(p.title, "$n song${if (n == 1) "" else "s"}", p.thumbnail, onClick = { navigator.localPlaylist(p.id) })
+                }
                 val list = playlists
-                if (list.isEmpty()) item { Message("Playlists you add show up here.") }
+                if (list.isEmpty() && mine.isEmpty()) item { Message("Playlists you make or add show up here.") }
                 items(list) { SongRow(it.title, it.author, it.thumbnails.hiRes(), onClick = { navigator.playlist(it.id) }) }
             }
             else -> {
@@ -151,9 +165,57 @@ fun LibraryListScreen(kind: String) {
                         "recentlyPlayed" -> recentlyPlayed
                         else -> mostPlayed
                     }
-                songs(list, title, if (kind == "songs" || kind == "downloaded") "Nothing here yet. Tap ♥ on a song to love it." else "Songs you play show up here.")
+                songs(list, title, if (kind == "songs") "Nothing here yet. Tap ♥ on a song to love it." else if (kind == "downloaded") "Songs you download show up here." else "Songs you play show up here.")
             }
         }
+    }
+}
+
+/** A playlist the user made: its songs, Play / Shuffle, and Delete at the bottom. */
+@Composable
+fun LocalPlaylistScreen(id: Long) {
+    val vm: LibraryViewModel = koinViewModel()
+    val navigator = LocalNavigator.current
+    val nex = LocalNex.current
+    val mine by vm.myPlaylists.collectAsStateWithLifecycle()
+    val list by remember(id) { vm.tracksOf(id) }.collectAsStateWithLifecycle(emptyList())
+    val playlist = mine.firstOrNull { it.id == id }
+    val title = playlist?.title.orEmpty()
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = BottomChromePadding)) {
+        item { Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars)) }
+        item { BackBar() }
+        item {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Artwork(playlist?.thumbnail, Modifier.padding(top = 8.dp).size(250.dp).shadow(20.dp, RoundedCornerShape(10.dp)), RoundedCornerShape(10.dp))
+                Spacer(Modifier.height(18.dp))
+                Text(title, style = NexType.Title2, textAlign = TextAlign.Center, maxLines = 2)
+                Text("${list.size} song${if (list.size == 1) "" else "s"}", style = NexType.Subhead, color = nex.secondaryLabel, modifier = Modifier.padding(top = 4.dp, bottom = 8.dp))
+            }
+        }
+        songs(list, title, "Long-press any song and choose Add to Playlist.") { vm.remove(id, it) }
+        item {
+            TextButton(onClick = { confirmDelete = true }, modifier = Modifier.padding(horizontal = 8.dp, vertical = 16.dp)) {
+                Text("Delete Playlist", style = NexType.Body, color = Color(0xFFFF3B30))
+            }
+        }
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            containerColor = nex.elevated,
+            title = { Text("Delete \"$title\"?", style = NexType.Headline) },
+            text = { Text("The songs stay in your library.", style = NexType.Subhead, color = nex.secondaryLabel) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    navigator.nav.popBackStack()
+                    vm.delete(id)
+                }) { Text("Delete", color = Color(0xFFFF3B30)) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel", color = Accent) } },
+        )
     }
 }
 
@@ -161,6 +223,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.songs(
     list: List<SongEntity>,
     title: String,
     empty: String,
+    onRemove: ((SongEntity) -> Unit)? = null,
 ) {
     if (list.isEmpty()) {
         item { Message(empty) }
@@ -178,6 +241,6 @@ private fun androidx.compose.foundation.lazy.LazyListScope.songs(
         val navigator = LocalNavigator.current
         val s = list[i]
         val track = s.toTrack()
-        SongRow(s.title, s.artistName?.joinToString(), s.thumbnails?.hiRes(), onClick = { navigator.player.playList(list.toArrayListTrack(), i, title, null) }, trailing = { DownloadButton(track) }, menu = track)
+        SongRow(s.title, s.artistName?.joinToString(), s.thumbnails?.hiRes(), onClick = { navigator.player.playList(list.toArrayListTrack(), i, title, null) }, trailing = { DownloadButton(track) }, menu = track, onRemove = onRemove?.let { { it(s) } })
     }
 }

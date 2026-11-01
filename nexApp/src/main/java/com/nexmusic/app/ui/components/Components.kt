@@ -29,7 +29,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -46,6 +48,12 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.effects.vibrancy
+import com.kyant.shapes.RoundedRectangularShape
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.maxrave.domain.data.entities.DownloadState
@@ -60,6 +68,7 @@ import com.nexmusic.app.ui.icon.NexIcons
 import com.nexmusic.app.ui.theme.Accent
 import com.nexmusic.app.ui.theme.LocalNex
 import com.nexmusic.app.ui.theme.NexType
+import kotlinx.coroutines.delay
 
 private val sizeSegment = Regex("w\\d+-h\\d+")
 
@@ -77,11 +86,36 @@ fun Artwork(
     val nex = LocalNex.current
     Box(modifier.clip(shape).background(nex.elevated), contentAlignment = Alignment.Center) {
         Icon(NexIcons.MusicNote, null, tint = nex.tertiaryLabel, modifier = Modifier.fillMaxSize(0.4f))
-        if (url != null) {
+        if (!url.isNullOrEmpty()) {
             AsyncImage(model = url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
     }
 }
+
+/**
+ * Apple's Liquid Glass: [backdrop] seen through a blurred, refracting pane with a specular rim.
+ * Blur needs API 31 and the lens API 33; below that the effects are no-ops, so the default tint goes near-opaque.
+ */
+@Composable
+fun Modifier.liquidGlass(
+    backdrop: Backdrop,
+    shape: RoundedRectangularShape,
+    // Dark text behind light glass bleeds through more, so light mode gets the thicker tint.
+    surface: Color = LocalNex.current.let { it.grouped.copy(alpha = if (android.os.Build.VERSION.SDK_INT < 31) 0.94f else if (it.isDark) 0.62f else 0.8f) },
+    // Hand a LayerBackdrop here to let a lens on top (the tab bar's selection pill) refract this pane.
+    exported: com.kyant.backdrop.backdrops.LayerBackdrop? = null,
+): Modifier =
+    drawBackdrop(
+        backdrop = backdrop,
+        shape = { shape },
+        effects = {
+            vibrancy()
+            blur(18.dp.toPx())
+            lens(14.dp.toPx(), 28.dp.toPx())
+        },
+        exportedBackdrop = exported,
+        onDrawSurface = { drawRect(surface) },
+    )
 
 /** Shrinks slightly while pressed, the way iOS cells and tiles respond. */
 @Composable
@@ -139,6 +173,7 @@ fun CoverCard(
     subtitle: String?,
     width: Dp = Dp.Unspecified,
     circle: Boolean = false,
+    videoId: String? = null,
     onClick: () -> Unit,
 ) {
     Column((if (width == Dp.Unspecified) Modifier.fillMaxWidth() else Modifier.width(width)).pressable(onClick)) {
@@ -152,7 +187,11 @@ fun CoverCard(
             modifier = if (circle) Modifier.align(Alignment.CenterHorizontally) else Modifier,
         )
         if (!subtitle.isNullOrBlank() && !circle) {
-            Text(subtitle, style = NexType.Footnote, color = LocalNex.current.secondaryLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // A song card shows its download state like a song row does.
+                if (videoId != null) DownloadedBadge(videoId)
+                Text(subtitle, style = NexType.Footnote, color = LocalNex.current.secondaryLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }
@@ -166,8 +205,9 @@ fun SongRow(
     leadingNumber: Int? = null,
     playing: Boolean = false,
     divider: Boolean = true,
-    trailing: @Composable () -> Unit = {},
+    trailing: (@Composable () -> Unit)? = null,
     menu: Track? = null,
+    onRemove: (() -> Unit)? = null,
 ) {
     val nex = LocalNex.current
     var menuOpen by remember { mutableStateOf(false) }
@@ -182,7 +222,7 @@ fun SongRow(
             })
         }
     Column(Modifier.fillMaxWidth().then(press)) {
-        if (menu != null) SongMenu(menu, menuOpen) { menuOpen = false }
+        if (menu != null) SongMenu(menu, menuOpen, onRemove) { menuOpen = false }
         Row(Modifier.padding(start = 20.dp, end = 12.dp).height(if (leadingNumber != null) 50.dp else 60.dp), verticalAlignment = Alignment.CenterVertically) {
             if (leadingNumber != null) {
                 Text("$leadingNumber", style = NexType.Body, color = nex.secondaryLabel, modifier = Modifier.width(32.dp))
@@ -192,11 +232,16 @@ fun SongRow(
             }
             Column(Modifier.weight(1f)) {
                 Text(title, style = NexType.Body, color = if (playing) Accent else nex.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (!subtitle.isNullOrBlank()) {
-                    Text(subtitle, style = NexType.Subhead, color = nex.secondaryLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // Rows without their own download button still show whether the song is on the device.
+                val badge = menu != null && trailing == null
+                if (!subtitle.isNullOrBlank() || badge) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (badge) DownloadedBadge(menu!!.videoId)
+                        Text(subtitle.orEmpty(), style = NexType.Subhead, color = nex.secondaryLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
-            trailing()
+            trailing?.invoke()
         }
         if (divider) HorizontalDivider(Modifier.padding(start = if (leadingNumber != null) 52.dp else 80.dp), thickness = 0.5.dp, color = nex.separator)
     }
@@ -207,9 +252,13 @@ fun SongRow(
 private fun SongMenu(
     track: Track,
     open: Boolean,
+    onRemove: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
     val navigator = LocalNavigator.current
+    var picking by remember { mutableStateOf(false) }
+    val liked by remember(track.videoId) { navigator.player.isLiked(track.videoId) }.collectAsStateWithLifecycle(false)
+    if (picking) AddToPlaylistDialog(track) { picking = false }
     val albumId = track.album?.id
     val artistId = track.artists?.firstOrNull { !it.id.isNullOrEmpty() }?.id
     DropdownMenu(open, onDismiss, containerColor = LocalNex.current.elevated) {
@@ -223,6 +272,9 @@ private fun SongMenu(
         })
         entry("Play Next") { navigator.player.playNext(track) }
         entry("Add to Queue") { navigator.player.addToQueue(track) }
+        entry("Add to Playlist…") { picking = true }
+        entry(if (liked) "Remove Love" else "Love") { navigator.player.setLiked(track, !liked) }
+        if (onRemove != null) entry("Remove from Playlist", onRemove)
         if (!albumId.isNullOrEmpty()) entry("Go to Album") { navigator.album(albumId) }
         if (artistId != null) entry("Go to Artist") { navigator.artist(artistId) }
     }
@@ -293,7 +345,46 @@ fun DownloadButton(track: Track) {
         when (state) {
             DownloadState.STATE_DOWNLOADED -> Icon(NexIcons.Downloaded, "Remove download", tint = Accent, modifier = Modifier.size(22.dp))
             DownloadState.STATE_NOT_DOWNLOADED -> Icon(NexIcons.Download, "Download", tint = LocalNex.current.secondaryLabel, modifier = Modifier.size(22.dp))
-            else -> CircularProgressIndicator(Modifier.size(18.dp), color = Accent, strokeWidth = 2.dp)
+            else -> DownloadRing(track.videoId, Accent, Modifier.size(20.dp))
         }
+    }
+}
+
+/** Apple's download ring: fills with the real percentage, spins while the size is still unknown. */
+@Composable
+fun DownloadRing(
+    videoId: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    val player = LocalNavigator.current.player
+    var percent by remember(videoId) { mutableFloatStateOf(-1f) }
+    LaunchedEffect(videoId) {
+        while (true) {
+            percent = player.downloadProgress(videoId)
+            delay(400)
+        }
+    }
+    val shown by animateFloatAsState((percent / 100f).coerceIn(0f, 1f), label = "download")
+    val track = color.copy(alpha = 0.25f)
+    if (percent < 0f) {
+        CircularProgressIndicator(modifier, color = color, strokeWidth = 2.dp, trackColor = track)
+    } else {
+        CircularProgressIndicator(progress = { shown }, modifier = modifier, color = color, strokeWidth = 2.dp, trackColor = track, gapSize = 0.dp)
+    }
+}
+
+/** Small glyph before a subtitle: a tick once downloaded, a ring while downloading, nothing otherwise. */
+@Composable
+fun DownloadedBadge(
+    videoId: String,
+    tint: Color = LocalNex.current.secondaryLabel,
+) {
+    val player = LocalNavigator.current.player
+    val state by remember(videoId) { player.downloadState(videoId) }.collectAsStateWithLifecycle(DownloadState.STATE_NOT_DOWNLOADED)
+    when (state) {
+        DownloadState.STATE_DOWNLOADED -> Icon(NexIcons.Downloaded, "Downloaded", tint = tint, modifier = Modifier.padding(end = 4.dp).size(14.dp))
+        DownloadState.STATE_NOT_DOWNLOADED -> Unit
+        else -> DownloadRing(videoId, tint, Modifier.padding(end = 4.dp).size(12.dp))
     }
 }

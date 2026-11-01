@@ -4,7 +4,15 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.lens
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -22,12 +30,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,8 +48,14 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.shapes.Capsule
+import com.nexmusic.app.ui.components.liquidGlass
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -68,6 +82,7 @@ import com.nexmusic.app.ui.screens.ArtistScreen
 import com.nexmusic.app.ui.screens.HomeScreen
 import com.nexmusic.app.ui.screens.LibraryListScreen
 import com.nexmusic.app.ui.screens.LibraryScreen
+import com.nexmusic.app.ui.screens.LocalPlaylistScreen
 import com.nexmusic.app.ui.screens.MoodScreen
 import com.nexmusic.app.ui.screens.NewScreen
 import com.nexmusic.app.ui.screens.PlaylistScreen
@@ -102,6 +117,8 @@ class Navigator(
     ) = nav.navigate("mood/${Uri.encode(params)}/${Uri.encode(title)}")
 
     fun library(kind: String) = nav.navigate("library/$kind")
+
+    fun localPlaylist(id: Long) = nav.navigate("local/$id")
 
     fun open(content: Content) {
         val browseId = content.browseId
@@ -155,10 +172,13 @@ fun NexApp() {
     var showPlayer by rememberSaveable { mutableStateOf(false) }
     val hasTrack = nowPlaying.mediaItem.mediaId.isNotEmpty()
     val nex = LocalNex.current
+    // What the glass chrome (mini player, tab bar) refracts: the page scrolling beneath it.
+    // layerBackdrop must wrap the background, or the glass blurs see-through text and the sharp page shows through.
+    val backdrop = rememberLayerBackdrop()
 
     CompositionLocalProvider(LocalNavigator provides navigator) {
         Box(Modifier.fillMaxSize().background(nex.background)) {
-            NavHost(nav, startDestination = Tab.Home.route, modifier = Modifier.fillMaxSize()) {
+            NavHost(nav, startDestination = Tab.Home.route, modifier = Modifier.fillMaxSize().layerBackdrop(backdrop).background(nex.background)) {
                 composable(Tab.Home.route) { HomeScreen() }
                 composable(Tab.New.route) { NewScreen() }
                 composable(Tab.Library.route) { LibraryScreen() }
@@ -170,11 +190,24 @@ fun NexApp() {
                     MoodScreen(Uri.decode(it.arguments?.getString("params").orEmpty()), Uri.decode(it.arguments?.getString("title").orEmpty()))
                 }
                 composable("library/{kind}") { LibraryListScreen(it.arguments?.getString("kind").orEmpty()) }
+                composable("local/{id}") { LocalPlaylistScreen(it.arguments?.getString("id")?.toLongOrNull() ?: -1L) }
+            }
+
+            // Pages scroll under the clock; fade them out there like iOS's scroll-edge effect. Artist pages keep their full-bleed photo.
+            val route by nav.currentBackStackEntryAsState()
+            if (route?.destination?.route?.startsWith("artist") != true) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(Brush.verticalGradient(0.55f to nex.background, 1f to nex.background.copy(alpha = 0f)))
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .height(14.dp),
+                )
             }
 
             Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-                if (hasTrack) MiniPlayer(onOpen = { showPlayer = true })
-                TabBar(nav)
+                if (hasTrack) MiniPlayer(backdrop, onOpen = { showPlayer = true })
+                TabBar(nav, backdrop)
             }
 
             AnimatedVisibility(
@@ -193,7 +226,10 @@ fun NexApp() {
 val BottomChromePadding = 150.dp
 
 @Composable
-private fun TabBar(nav: NavController) {
+private fun TabBar(
+    nav: NavController,
+    backdrop: Backdrop,
+) {
     val nex = LocalNex.current
     val navigator = LocalNavigator.current
     val entry by nav.currentBackStackEntryAsState()
@@ -201,27 +237,54 @@ private fun TabBar(nav: NavController) {
     // Tabs stay lit while a page pushed from them is open.
     var lastTab by rememberSaveable { mutableStateOf(Tab.Home.route) }
     Tab.entries.firstOrNull { it.route == current }?.let { lastTab = it.route }
-    val barColor = if (Build.VERSION.SDK_INT >= 31) nex.grouped.copy(alpha = 0.94f) else nex.grouped
-    Column(Modifier.background(barColor).windowInsetsPadding(WindowInsets.navigationBars)) {
-        HorizontalDivider(thickness = 0.5.dp, color = nex.separator)
-        Row(Modifier.fillMaxWidth().height(54.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+    // iOS 26: the tab bar floats as a frosted glass capsule, and a clear liquid-glass lens slides over it to the selected tab.
+    val bar = rememberLayerBackdrop()
+    val index = Tab.entries.indexOfFirst { it.route == lastTab }.coerceAtLeast(0)
+    BoxWithConstraints(
+        Modifier
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
+            .fillMaxWidth()
+            .height(62.dp)
+            .liquidGlass(backdrop, Capsule(), exported = bar),
+    ) {
+        val inset = 4.dp
+        val slot = (maxWidth - inset * 2) / Tab.entries.size
+        val x by animateDpAsState(inset + slot * index, spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow), label = "tabLens")
+        Box(
+            Modifier
+                .offset(x = x, y = inset)
+                .size(slot, maxHeight - inset * 2)
+                .drawBackdrop(
+                    backdrop = bar,
+                    shape = { Capsule() },
+                    effects = { lens(10.dp.toPx(), 20.dp.toPx(), chromaticAberration = true) },
+                    onDrawSurface = { drawRect(nex.label.copy(alpha = 0.07f)) },
+                ),
+        )
+        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             Tab.entries.forEach { tab ->
                 val selected = lastTab == tab.route
                 Column(
                     Modifier
                         .weight(1f)
+                        .fillMaxHeight()
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                            if (current == tab.route) {
-                                navigator.reselected.tryEmit(tab.route)
-                                return@clickable
+                            when {
+                                current == tab.route -> navigator.reselected.tryEmit(tab.route)
+                                // Inside this tab with a page pushed on top: back to the tab's root, like iOS.
+                                selected -> nav.popBackStack(tab.route, inclusive = false)
+                                else ->
+                                    nav.navigate(tab.route) {
+                                        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                        launchSingleTop = true
+                                        // Search always opens on its field, never on the artist or album left open in it.
+                                        restoreState = tab != Tab.Search
+                                    }
                             }
-                            nav.navigate(tab.route) {
-                                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        }.padding(top = 6.dp),
+                        },
                     horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
                 ) {
                     val tint = if (selected) Accent else nex.secondaryLabel
                     Icon(tab.icon, tab.label, tint = tint, modifier = Modifier.size(26.dp))

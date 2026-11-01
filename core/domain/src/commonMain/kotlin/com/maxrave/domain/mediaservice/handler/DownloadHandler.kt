@@ -17,6 +17,9 @@ interface DownloadHandler {
 
     val downloadTask: StateFlow<Map<String, Int>>
 
+    /** 0–100 for a download in flight, or -1 when not running or the size is unknown. */
+    fun progress(videoId: String): Float = -1f
+
     /**
      * Copy from Media3
      */

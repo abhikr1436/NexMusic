@@ -59,8 +59,28 @@ class PlayerViewModel(
             .flatMapLatest { downloadState(it.mediaItem.mediaId) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DownloadState.STATE_NOT_DOWNLOADED)
 
+    /** Whether the current song is loved, live from its Room row, so the heart matches the Songs list. */
+    val liked: StateFlow<Boolean> =
+        handler.nowPlayingState
+            .distinctUntilChangedBy { it.mediaItem.mediaId }
+            .flatMapLatest { s -> songRepository.getSongAsFlow(s.mediaItem.mediaId).map { it?.liked == true } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     /** Live from the song's Room row, which the download service keeps up to date. No row means never downloaded. */
     fun downloadState(videoId: String): Flow<Int> = songRepository.getSongAsFlow(videoId).map { it?.downloadState ?: DownloadState.STATE_NOT_DOWNLOADED }
+
+    fun downloadProgress(videoId: String): Float = downloads.progress(videoId)
+
+    fun isLiked(videoId: String): Flow<Boolean> = songRepository.getSongAsFlow(videoId).map { it?.liked == true }
+
+    /** Love from a song's menu; a song never played needs its row first (insert ignores an existing one). */
+    fun setLiked(
+        track: Track,
+        liked: Boolean,
+    ) = viewModelScope.launch {
+        songRepository.insertSong(track.toSongEntity()).first()
+        songRepository.updateLikeStatus(track.videoId, if (liked) 1 else 0)
+    }
 
     init {
         viewModelScope.launch {
@@ -70,8 +90,8 @@ class PlayerViewModel(
                         _position.value = state.progress
                         if (_duration.value <= 0) _duration.value = handler.getPlayerDuration().coerceAtLeast(0)
                     }
-                    is SimpleMediaState.Ready -> _duration.value = state.duration
-                    is SimpleMediaState.Loading -> _duration.value = state.duration
+                    is SimpleMediaState.Ready -> _duration.value = state.duration.coerceAtLeast(0) // C.TIME_UNSET is negative
+                    is SimpleMediaState.Loading -> _duration.value = state.duration.coerceAtLeast(0)
                     is SimpleMediaState.Ended -> _position.value = 0
                     else -> Unit
                 }

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.maxrave.domain.data.entities.AlbumEntity
 import com.maxrave.domain.data.entities.ArtistEntity
+import com.maxrave.domain.data.entities.LocalPlaylistEntity
 import com.maxrave.domain.data.entities.PlaylistEntity
 import com.maxrave.domain.data.entities.SearchHistory
 import com.maxrave.domain.data.entities.SongEntity
@@ -20,6 +21,7 @@ import com.maxrave.domain.data.model.searchResult.songs.SongsResult
 import com.maxrave.domain.repository.AlbumRepository
 import com.maxrave.domain.repository.ArtistRepository
 import com.maxrave.domain.repository.HomeRepository
+import com.maxrave.domain.repository.LocalPlaylistRepository
 import com.maxrave.domain.repository.PlaylistRepository
 import com.maxrave.domain.repository.SearchRepository
 import com.maxrave.domain.repository.SongRepository
@@ -28,6 +30,7 @@ import com.maxrave.domain.utils.Resource
 import com.maxrave.domain.utils.toTrack
 import com.maxrave.domain.utils.toAlbumEntity
 import com.maxrave.domain.utils.toPlaylistEntity
+import com.maxrave.domain.utils.toSongEntity
 import com.nexmusic.app.ui.components.best
 import com.nexmusic.app.ui.components.hiRes
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -43,13 +46,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Network screens: still loading, failed with a message, or loaded. */
@@ -80,8 +86,11 @@ private fun <T> ViewModel.loadInto(
  * `getAllSongs` reads once, so Room's most-played Flow (which re-emits on any song-table write) re-runs it.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-fun SongRepository.recentlyPlayed(): Flow<List<SongEntity>> =
-    getMostPlayedSongs().flatMapLatest { getAllSongs(100) }.map { list -> list.filter { it.totalPlayTime > 0 } }
+fun SongRepository.recentlyPlayed(): Flow<List<SongEntity>> = onSongChange { getAllSongs(100) }.map { list -> list.filter { it.totalPlayTime > 0 } }
+
+/** Re-runs a one-shot song read whenever the song table changes (a like, a download, a play), using Room's most-played Flow as the signal. */
+@OptIn(ExperimentalCoroutinesApi::class)
+fun <T> SongRepository.onSongChange(read: () -> Flow<T>): Flow<T> = getMostPlayedSongs().flatMapLatest { read() }
 
 /** A Made For You card: a list to play, or one seed song whose radio to start. */
 data class Mix(
@@ -92,10 +101,20 @@ data class Mix(
     val radio: Boolean = false,
 )
 
+/** A single or album on the New tab, from an artist the user has been playing. */
+data class Release(
+    val browseId: String,
+    val title: String,
+    val artist: String,
+    val year: String,
+    val art: String?,
+)
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel(
     private val home: HomeRepository,
     private val songs: SongRepository,
+    private val artists: ArtistRepository,
 ) : ViewModel() {
     // Lazy: only Home subscribes, so the New tab's instance never reads history or fetches mixes.
     val recentlyPlayed: StateFlow<List<SongEntity>> =
@@ -103,13 +122,49 @@ class HomeViewModel(
 
     /** Taste = the last 100 songs played, weighted by plays, plus loved songs (a heart counts as 3 plays). */
     val madeForYou: StateFlow<List<Mix>> =
-        combine(recentlyPlayed, songs.getLikedSongs()) { played, liked ->
+        combine(recentlyPlayed, songs.onSongChange { songs.getLikedSongs() }) { played, liked ->
             (played + liked).distinctBy { it.videoId }.sortedByDescending { it.totalPlayTime + if (it.liked) 3 else 0 }
         }
             // Re-fetch only when the favourites change, not on every play.
             .distinctUntilChangedBy { top -> top.take(5).map { it.videoId } }
             .mapLatest { mixes(it) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Newest singles and albums from the six artists played most in recent history; only the New tab subscribes. */
+    val newForYou: StateFlow<List<Release>> =
+        recentlyPlayed
+            .map { played ->
+                played
+                    .mapNotNull { s -> s.artistId?.firstOrNull { it.startsWith("UC") }?.let { it to s.totalPlayTime } }
+                    .groupBy({ it.first }, { it.second })
+                    .entries
+                    .sortedByDescending { it.value.sum() }
+                    .take(6)
+                    .map { it.key }
+            }.distinctUntilChanged()
+            .mapLatest { releasesOf(it) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private suspend fun releasesOf(artistIds: List<String>): List<Release> {
+        val perArtist =
+            coroutineScope {
+                artistIds.map { id ->
+                    async {
+                        val a = runCatching { artists.getArtistData(id).first().data }.getOrNull() ?: return@async emptyList()
+                        // YouTube lists an artist's releases newest first.
+                        a.singles?.results.orEmpty().take(4).map { Release(it.browseId, it.title, a.name, it.year, it.thumbnails.best()) } +
+                            a.albums?.results.orEmpty().take(2).map { Release(it.browseId, it.title, a.name, it.year, it.thumbnails.best()) }
+                    }
+                }.awaitAll()
+            }
+        // Newest year first; within a year, take turns between artists so one doesn't fill the shelf.
+        return perArtist
+            .flatMap { it.withIndex() }
+            .sortedWith(compareByDescending<IndexedValue<Release>> { it.value.year.take(4).toIntOrNull() ?: 0 }.thenBy { it.index })
+            .map { it.value }
+            .distinctBy { it.browseId }
+            .take(24)
+    }
 
     private suspend fun mixes(top: List<SongEntity>): List<Mix> {
         if (top.isEmpty()) return emptyList()
@@ -236,21 +291,87 @@ class SearchViewModel(
         }
 }
 
+/**
+ * Saved albums, playlists, artists and the user's own playlists are read once (not Room Flows),
+ * so every write to them bumps this and the reads re-run.
+ */
+object LibraryChanges {
+    val tick = MutableStateFlow(0)
+
+    fun bump() = tick.update { it + 1 }
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
+private fun <T> reloading(read: () -> Flow<T>): Flow<T> = LibraryChanges.tick.flatMapLatest { read() }
+
+@OptIn(ExperimentalCoroutinesApi::class)
 class LibraryViewModel(
     songs: SongRepository,
     albums: AlbumRepository,
     playlists: PlaylistRepository,
     artists: ArtistRepository,
+    private val local: LocalPlaylistRepository,
 ) : ViewModel() {
     private fun <T> Flow<T>.state(initial: T) = stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initial)
 
-    val liked: StateFlow<List<SongEntity>> = songs.getLikedSongs().state(emptyList())
-    val downloaded: StateFlow<List<SongEntity>> = songs.getDownloadedSongs().map { it.orEmpty() }.state(emptyList())
+    /** Playlists the user made, newest first. */
+    val myPlaylists: StateFlow<List<LocalPlaylistEntity>> = reloading { local.getAllLocalPlaylists() }.map { it.sortedByDescending { p -> p.id } }.state(emptyList())
+
+    fun tracksOf(id: Long): Flow<List<SongEntity>> = reloading { flow { emit(local.getFullPlaylistTracks(id)) } }
+
+    /** Creates a playlist, then adds [first] to it when given (the "New Playlist…" row of Add to Playlist). */
+    fun create(
+        title: String,
+        first: Track? = null,
+    ) = viewModelScope.launch {
+        local.insertLocalPlaylist(LocalPlaylistEntity(title = title.trim()), "").collect {}
+        // insert hands back no id; the newest row is the one just made.
+        val id = local.getAllLocalPlaylists().first().maxOfOrNull { it.id }
+        if (first != null && id != null) addTrack(id, first) else LibraryChanges.bump()
+    }
+
+    fun add(
+        id: Long,
+        track: Track,
+    ) = viewModelScope.launch { addTrack(id, track) }
+
+    private suspend fun addTrack(
+        id: Long,
+        track: Track,
+    ) {
+        val playlist = local.getAllLocalPlaylists().first().firstOrNull { it.id == id } ?: return
+        if (playlist.tracks?.contains(track.videoId) != true) {
+            local.addTrackToLocalPlaylist(id, track.toSongEntity(), "", "", "").collect {}
+            // The first song added gives the playlist its cover.
+            if (playlist.thumbnail.isNullOrEmpty()) track.thumbnails.best()?.let { local.updateThumbnailLocalPlaylist(id, it, "").collect {} }
+        }
+        LibraryChanges.bump()
+    }
+
+    fun remove(
+        id: Long,
+        song: SongEntity,
+    ) = viewModelScope.launch {
+        local.removeTrackFromLocalPlaylist(id, song, "", "", "").collect {}
+        // The cover follows whichever song is now first.
+        // Empty once the last song goes: "" falls back to the placeholder art.
+        local.updateThumbnailLocalPlaylist(id, local.getFullPlaylistTracks(id).firstOrNull()?.thumbnails.orEmpty(), "").collect {}
+        LibraryChanges.bump()
+    }
+
+    fun delete(id: Long) =
+        viewModelScope.launch {
+            local.deleteLocalPlaylist(id, "").collect {}
+            LibraryChanges.bump()
+        }
+
+    val liked: StateFlow<List<SongEntity>> = songs.onSongChange { songs.getLikedSongs() }.state(emptyList())
+    val downloaded: StateFlow<List<SongEntity>> = songs.onSongChange { songs.getDownloadedSongs() }.map { it.orEmpty() }.state(emptyList())
     val mostPlayed: StateFlow<List<SongEntity>> = songs.getMostPlayedSongs().state(emptyList())
     val recentlyPlayed: StateFlow<List<SongEntity>> = songs.recentlyPlayed().state(emptyList())
-    val savedAlbums: StateFlow<List<AlbumEntity>> = albums.getLikedAlbums().state(emptyList())
-    val savedPlaylists: StateFlow<List<PlaylistEntity>> = playlists.getLikedPlaylists().state(emptyList())
-    val followedArtists: StateFlow<List<ArtistEntity>> = artists.getFollowedArtists().state(emptyList())
+    val savedAlbums: StateFlow<List<AlbumEntity>> = reloading { albums.getLikedAlbums() }.state(emptyList())
+    val savedPlaylists: StateFlow<List<PlaylistEntity>> = reloading { playlists.getLikedPlaylists() }.state(emptyList())
+    val followedArtists: StateFlow<List<ArtistEntity>> = reloading { artists.getFollowedArtists() }.state(emptyList())
 }
 
 /** Album, playlist, artist and category pages. Each page gets its own instance. */
@@ -303,6 +424,8 @@ class DetailViewModel(
 
     fun toggleLibrary() {
         val save = !inLibrary.value
+        // Playlist and artist reads are one-shot (not Room Flows), so flip the heart here rather than wait for a re-emit.
+        inLibrary.value = save
         viewModelScope.launch {
             (album.value as? Load.Ready)?.value?.let { a ->
                 val id = albumId ?: return@let
@@ -321,6 +444,7 @@ class DetailViewModel(
                 }
                 artists.updateFollowedStatus(id, if (save) 1 else 0)
             }
+            LibraryChanges.bump()
         }
     }
 }

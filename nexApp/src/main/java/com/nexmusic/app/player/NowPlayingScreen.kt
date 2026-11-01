@@ -3,6 +3,7 @@ package com.nexmusic.app.player
 import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -38,7 +39,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,6 +49,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,7 +60,22 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.Velocity
+import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.shapes.Capsule
+import com.nexmusic.app.ui.components.AddToPlaylistDialog
+import com.nexmusic.app.ui.components.DownloadRing
+import com.nexmusic.app.ui.components.DownloadedBadge
+import com.nexmusic.app.ui.icon.PlaylistAdd
+import com.nexmusic.app.ui.components.liquidGlass
+import kotlinx.coroutines.launch
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -68,7 +85,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.domain.data.entities.DownloadState
+import com.maxrave.domain.extension.toSongEntity
+import com.maxrave.domain.utils.toTrack
 import com.maxrave.domain.data.model.metadata.Lyrics
 import com.maxrave.domain.mediaservice.handler.RepeatState
 import com.nexmusic.app.ui.components.Artwork
@@ -103,11 +123,56 @@ fun NowPlayingScreen(onClose: () -> Unit) {
     val state by player.nowPlaying.collectAsStateWithLifecycle()
     val control by player.control.collectAsStateWithLifecycle()
     val download by player.downloadState.collectAsStateWithLifecycle()
+    val liked by player.liked.collectAsStateWithLifecycle()
     val meta = state.mediaItem.metadata
     val art = meta.artworkUri?.hiRes()
     var pane by remember { mutableStateOf(Pane.Artwork) }
     var dragY by remember { mutableFloatStateOf(0f) }
     val dismissPx = with(LocalDensity.current) { 140.dp.toPx() }
+    val close by rememberUpdatedState(onClose)
+    val scope = rememberCoroutineScope()
+    val glass = rememberLayerBackdrop()
+    // A session restored after a restart carries no Track, only its media item; build one so the buttons still work.
+    val track = state.track ?: (state.songEntity ?: state.mediaItem.toSongEntity().takeIf { state.mediaItem.mediaId.isNotEmpty() })?.toTrack()
+    var picking by remember { mutableStateOf(false) }
+    track?.takeIf { picking }?.let { AddToPlaylistDialog(it) { picking = false } }
+
+    // Let go past the threshold or with a downward flick to dismiss; otherwise spring back.
+    fun settle(velocity: Float) {
+        if (dragY > dismissPx || velocity > 2_000f) close() else scope.launch { animate(dragY, 0f) { v, _ -> dragY = v } }
+    }
+
+    // Lyrics and queue lists scroll first; a pull down once they're at the top drags the whole sheet.
+    val sheetScroll =
+        remember {
+            object : NestedScrollConnection {
+                override fun onPreScroll(
+                    available: Offset,
+                    source: NestedScrollSource,
+                ): Offset {
+                    if (dragY <= 0f || available.y >= 0f) return Offset.Zero
+                    val used = maxOf(available.y, -dragY)
+                    dragY += used
+                    return Offset(0f, used)
+                }
+
+                override fun onPostScroll(
+                    consumed: Offset,
+                    available: Offset,
+                    source: NestedScrollSource,
+                ): Offset {
+                    if (available.y <= 0f || source != NestedScrollSource.UserInput) return Offset.Zero
+                    dragY += available.y
+                    return Offset(0f, available.y)
+                }
+
+                override suspend fun onPreFling(available: Velocity): Velocity {
+                    if (dragY <= 0f) return Velocity.Zero
+                    settle(available.y)
+                    return available
+                }
+            }
+        }
 
     Box(
         Modifier
@@ -115,22 +180,25 @@ fun NowPlayingScreen(onClose: () -> Unit) {
             .offset { IntOffset(0, dragY.coerceAtLeast(0f).roundToInt()) }
             .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
             .background(Color.Black)
+            .nestedScroll(sheetScroll)
+            // Drag down anywhere on the sheet, not just the grabber.
+            .draggable(
+                rememberDraggableState { dragY = (dragY + it).coerceAtLeast(0f) },
+                Orientation.Vertical,
+                onDragStopped = { settle(it) },
+            )
             // Swallow taps so nothing underneath reacts.
             .pointerInput(Unit) { detectTapGestures { } },
     ) {
-        Backdrop(art)
+        Backdrop(art, Modifier.layerBackdrop(glass))
         CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides Color.White) {
             Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-                // Grabber: drag down to dismiss, or tap.
+                // Grabber: tap to dismiss (dragging works anywhere).
                 Box(
                     Modifier
                         .fillMaxWidth()
                         .height(28.dp)
-                        .draggable(
-                            rememberDraggableState { dragY += it },
-                            Orientation.Vertical,
-                            onDragStopped = { if (dragY > dismissPx) onClose() else dragY = 0f },
-                        ).clickable(onClick = onClose),
+                        .clickable(onClick = onClose),
                     contentAlignment = Alignment.Center,
                 ) {
                     Box(Modifier.size(40.dp, 5.dp).clip(CircleShape).background(White35))
@@ -141,7 +209,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                         Pane.Artwork ->
                             Column(Modifier.fillMaxSize().padding(horizontal = 28.dp)) {
                                 BigArtwork(art, control.isPlaying, Modifier.weight(1f))
-                                TitleRow(meta.title.orEmpty(), meta.artist.orEmpty(), control.isLiked, player::toggleLike, download, { state.track?.let { player.toggleDownload(it, download) } })
+                                TitleRow(glass, state.mediaItem.mediaId, meta.title.orEmpty(), meta.artist.orEmpty(), liked, player::toggleLike, download, { track?.let { player.toggleDownload(it, download) } }, { picking = true })
                             }
                         Pane.Lyrics ->
                             Column(Modifier.fillMaxSize()) {
@@ -151,7 +219,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                         Pane.Queue ->
                             Column(Modifier.fillMaxSize()) {
                                 SmallHeader(art, meta.title.orEmpty(), meta.artist.orEmpty())
-                                QueuePane(player, Modifier.weight(1f))
+                                QueuePane(player, glass, Modifier.weight(1f))
                             }
                     }
                 }
@@ -171,7 +239,10 @@ fun NowPlayingScreen(onClose: () -> Unit) {
 
 /** Apple's Now Playing background: the cover itself, blown up and blurred. */
 @Composable
-private fun Backdrop(art: String?) {
+private fun Backdrop(
+    art: String?,
+    modifier: Modifier,
+) = Box(modifier.fillMaxSize()) {
     val canBlur = Build.VERSION.SDK_INT >= 31
     AsyncImage(
         model = art,
@@ -206,28 +277,35 @@ private fun BigArtwork(
 
 @Composable
 private fun TitleRow(
+    glass: Backdrop,
+    videoId: String,
     title: String,
     artist: String,
     liked: Boolean,
     onLike: () -> Unit,
     download: Int,
     onDownload: () -> Unit,
+    onAddToPlaylist: () -> Unit,
 ) {
     Row(Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, style = NexType.Title3, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(artist, style = NexType.Title3.copy(fontWeight = FontWeight.Normal), color = White60, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        IconButton(onClick = onDownload, modifier = Modifier.size(36.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f))) {
+        IconButton(onClick = onAddToPlaylist, modifier = Modifier.size(36.dp).liquidGlass(glass, Capsule(), Color.White.copy(alpha = 0.16f))) {
+            Icon(NexIcons.PlaylistAdd, "Add to Playlist", Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(20.dp))
+        IconButton(onClick = onDownload, modifier = Modifier.size(36.dp).liquidGlass(glass, Capsule(), Color.White.copy(alpha = 0.16f))) {
             when (download) {
                 DownloadState.STATE_DOWNLOADED -> Icon(NexIcons.Downloaded, "Remove download", Modifier.size(20.dp))
                 DownloadState.STATE_NOT_DOWNLOADED -> Icon(NexIcons.Download, "Download", Modifier.size(20.dp))
-                else -> CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                else -> DownloadRing(videoId, Color.White, Modifier.size(20.dp))
             }
         }
         // IconButton grows each side to its 48dp touch target, so 36dp circles need this much to look apart.
         Spacer(Modifier.width(20.dp))
-        IconButton(onClick = onLike, modifier = Modifier.size(36.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f))) {
+        IconButton(onClick = onLike, modifier = Modifier.size(36.dp).liquidGlass(glass, Capsule(), Color.White.copy(alpha = 0.16f))) {
             Icon(if (liked) NexIcons.Favorite else NexIcons.FavoriteBorder, if (liked) "Unlike" else "Like", Modifier.size(20.dp))
         }
     }
@@ -290,7 +368,7 @@ private fun Scrubber(player: PlayerViewModel) {
         }
         Row(Modifier.fillMaxWidth()) {
             Text((if (dragging) (duration * dragFraction).toLong() else position).clock(), style = NexType.Caption, color = White60, modifier = Modifier.weight(1f))
-            Text("-" + (duration - (if (dragging) (duration * dragFraction).toLong() else position)).clock(), style = NexType.Caption, color = White60)
+            Text("-" + (duration - (if (dragging) (duration * dragFraction).toLong() else position)).coerceAtLeast(0).clock(), style = NexType.Caption, color = White60)
         }
     }
 }
@@ -390,25 +468,30 @@ private fun LyricsPane(
 @Composable
 private fun QueuePane(
     player: PlayerViewModel,
+    glass: Backdrop,
     modifier: Modifier,
 ) {
     val queue by player.queue.collectAsStateWithLifecycle()
     val control by player.control.collectAsStateWithLifecycle()
     val current by player.currentIndex.collectAsStateWithLifecycle()
     val tracks = queue?.data?.listTracks.orEmpty()
+    val now by player.nowPlaying.collectAsStateWithLifecycle()
+    // The player's index is in play order; with shuffle that isn't the list's order, so trust it only when it points at the playing song.
+    val here = now.mediaItem.mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO)
+    val playingAt = if (tracks.getOrNull(current)?.videoId == here) current else tracks.indexOfFirst { it.videoId == here }
     Column(modifier) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Playing Next", style = NexType.Headline)
                 queue?.data?.playlistName?.let { Text("From $it", style = NexType.Footnote, color = White60, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
-            QueueToggle(NexIcons.Shuffle, "Shuffle", control.isShuffle, player::shuffle)
+            QueueToggle(glass, NexIcons.Shuffle, "Shuffle", control.isShuffle, player::shuffle)
             Spacer(Modifier.width(8.dp))
-            QueueToggle(if (control.repeatState == RepeatState.One) NexIcons.RepeatOne else NexIcons.Repeat, "Repeat", control.repeatState != RepeatState.None, player::repeat)
+            QueueToggle(glass, if (control.repeatState == RepeatState.One) NexIcons.RepeatOne else NexIcons.Repeat, "Repeat", control.repeatState != RepeatState.None, player::repeat)
         }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
             itemsIndexed(tracks, key = { i, t -> "$i-${t.videoId}" }) { i, t ->
-                if (i <= current) return@itemsIndexed
+                if (i <= playingAt) return@itemsIndexed
                 Row(
                     Modifier.fillMaxWidth().clickable { player.playQueueItem(i) }.padding(horizontal = 24.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -417,7 +500,10 @@ private fun QueuePane(
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(t.title, style = NexType.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(t.artists?.joinToString { it.name }.orEmpty(), style = NexType.Subhead, color = White60, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            DownloadedBadge(t.videoId, White60)
+                            Text(t.artists?.joinToString { it.name }.orEmpty(), style = NexType.Subhead, color = White60, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                 }
             }
@@ -427,6 +513,7 @@ private fun QueuePane(
 
 @Composable
 private fun QueueToggle(
+    glass: Backdrop,
     icon: ImageVector,
     label: String,
     on: Boolean,
@@ -435,8 +522,8 @@ private fun QueueToggle(
     Box(
         Modifier
             .size(width = 52.dp, height = 32.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (on) Color.White.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.14f))
+            .liquidGlass(glass, Capsule(), Color.White.copy(alpha = if (on) 0.85f else 0.16f))
+            .clip(CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {

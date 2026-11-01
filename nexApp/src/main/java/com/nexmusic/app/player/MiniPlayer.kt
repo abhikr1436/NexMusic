@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -22,7 +22,11 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kyant.backdrop.Backdrop
+import com.kyant.shapes.Capsule
 import com.nexmusic.app.ui.components.Artwork
+import com.nexmusic.app.ui.components.DownloadedBadge
+import com.nexmusic.app.ui.components.liquidGlass
 import com.nexmusic.app.ui.icon.FastForward
 import com.nexmusic.app.ui.icon.NexIcons
 import com.nexmusic.app.ui.icon.Pause
@@ -33,7 +37,10 @@ import org.koin.androidx.compose.koinViewModel
 
 /** The floating capsule above the tab bar. */
 @Composable
-fun MiniPlayer(onOpen: () -> Unit) {
+fun MiniPlayer(
+    backdrop: Backdrop,
+    onOpen: () -> Unit,
+) {
     val player: PlayerViewModel = koinViewModel()
     val state by player.nowPlaying.collectAsStateWithLifecycle()
     val control by player.control.collectAsStateWithLifecycle()
@@ -41,20 +48,22 @@ fun MiniPlayer(onOpen: () -> Unit) {
     val meta = state.mediaItem.metadata
     Row(
         Modifier
-            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
             .fillMaxWidth()
-            .shadow(16.dp, RoundedCornerShape(16.dp), ambientColor = nex.label.copy(alpha = 0.3f))
-            .clip(RoundedCornerShape(16.dp))
-            .background(nex.elevated)
+            .liquidGlass(backdrop, Capsule())
+            .clip(CircleShape)
             .clickable(onClick = onOpen)
-            .padding(8.dp),
+            .padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Artwork(meta.artworkUri, Modifier.size(44.dp), RoundedCornerShape(8.dp))
+        Artwork(meta.artworkUri, Modifier.size(44.dp), CircleShape)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(meta.title.orEmpty(), style = NexType.Subhead, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(meta.artist.orEmpty(), style = NexType.Footnote, color = nex.secondaryLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                DownloadedBadge(state.mediaItem.mediaId)
+                Text(meta.artist.orEmpty(), style = NexType.Footnote, color = nex.secondaryLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         IconButton(onClick = { player.playPause() }) {
             Icon(if (control.isPlaying) NexIcons.Pause else NexIcons.PlayArrow, if (control.isPlaying) "Pause" else "Play", Modifier.size(30.dp))

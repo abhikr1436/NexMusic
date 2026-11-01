@@ -28,9 +28,6 @@ data class NexPalette(
 
 val Accent = Color(0xFFFA2D48)
 
-/** iOS switch green. */
-val IosGreen = Color(0xFF34C759)
-
 private val Dark =
     NexPalette(
         background = Color.Black,
