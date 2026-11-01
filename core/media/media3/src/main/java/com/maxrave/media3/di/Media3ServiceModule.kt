@@ -40,6 +40,10 @@ import androidx.media3.extractor.flac.FlacExtractor
 import androidx.media3.extractor.mkv.MatroskaExtractor
 import androidx.media3.extractor.mp4.FragmentedMp4Extractor
 import androidx.media3.extractor.mp4.Mp4Extractor
+import androidx.media3.extractor.mp3.Mp3Extractor
+import androidx.media3.extractor.ogg.OggExtractor
+import androidx.media3.extractor.ts.AdtsExtractor
+import androidx.media3.extractor.wav.WavExtractor
 import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import com.maxrave.common.Config.CANVAS_CACHE
@@ -391,6 +395,12 @@ private fun provideExtractorFactory(): ExtractorsFactory =
             Mp4Extractor(
                 DefaultSubtitleParserFactory(),
             ),
+            // Music files the user imports from the phone. Last, since sniffing tries them in order and the MP3
+            // sniffer is lenient: YouTube's streams must still be claimed by the containers above.
+            Mp3Extractor(),
+            WavExtractor(),
+            OggExtractor(),
+            AdtsExtractor(),
         )
     }
 

@@ -59,6 +59,8 @@ import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** Network screens: still loading, failed with a message, or loaded. */
 sealed interface Load<out T> {
@@ -329,6 +331,9 @@ object LibraryChanges {
     fun bump() = tick.update { it + 1 }
 }
 
+/** One playlist write at a time, across every screen's LibraryViewModel and account sync. */
+internal val playlistWrites = Mutex()
+
 @OptIn(ExperimentalCoroutinesApi::class)
 private fun <T> reloading(read: () -> Flow<T>): Flow<T> = LibraryChanges.tick.flatMapLatest { read() }
 
@@ -363,11 +368,12 @@ class LibraryViewModel(
         track: Track,
     ) = viewModelScope.launch { addTrack(id, track) }
 
+    // Each write reads the track list and writes it back whole, so two at once would drop a song.
     private suspend fun addTrack(
         id: Long,
         track: Track,
-    ) {
-        val playlist = local.getAllLocalPlaylists().first().firstOrNull { it.id == id } ?: return
+    ) = playlistWrites.withLock {
+        val playlist = local.getAllLocalPlaylists().first().firstOrNull { it.id == id } ?: return@withLock
         if (playlist.tracks?.contains(track.videoId) != true) {
             local.addTrackToLocalPlaylist(id, track.toSongEntity(), "", "", "").collect {}
             // The first song added gives the playlist its cover.
@@ -380,10 +386,36 @@ class LibraryViewModel(
         id: Long,
         song: SongEntity,
     ) = viewModelScope.launch {
-        local.removeTrackFromLocalPlaylist(id, song, "", "", "").collect {}
-        // The cover follows whichever song is now first.
+        playlistWrites.withLock {
+            local.removeTrackFromLocalPlaylist(id, song, "", "", "").collect {}
+            settle(id, local.getFullPlaylistTracks(id))
+        }
+    }
+
+    /** Edit mode's Done: the new name, the songs kept in their new order, and the ones taken out. */
+    fun saveEdits(
+        id: Long,
+        title: String,
+        kept: List<SongEntity>,
+        removed: List<SongEntity>,
+    ) = viewModelScope.launch {
+        playlistWrites.withLock {
+            val current = local.getAllLocalPlaylists().first().firstOrNull { it.id == id } ?: return@withLock
+            if (title.isNotBlank() && title != current.title) local.updateTitleLocalPlaylist(id, title.trim(), "", "", "").collect {}
+            removed.forEach { local.removeTrackFromLocalPlaylist(id, it, "", "", "").collect {} }
+            settle(id, kept)
+        }
+    }
+
+    /** Writes [order] as positions 0..n-1, points the cover at the first song, and refreshes the lists. */
+    private suspend fun settle(
+        id: Long,
+        order: List<SongEntity>,
+    ) {
+        // Absolute positions, so any order left by older writes is corrected too.
+        local.setTrackOrder(id, order.map { it.videoId })
         // Empty once the last song goes: "" falls back to the placeholder art.
-        local.updateThumbnailLocalPlaylist(id, local.getFullPlaylistTracks(id).firstOrNull()?.thumbnails.orEmpty(), "").collect {}
+        local.updateThumbnailLocalPlaylist(id, order.firstOrNull()?.thumbnails.orEmpty(), "").collect {}
         LibraryChanges.bump()
     }
 

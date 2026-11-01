@@ -102,4 +102,9 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.coroutines.android)
+
+    // Already in the APK via :media3; needed here to write imported files into the download cache.
+    implementation(libs.media3.exoplayer)
+
+    testImplementation(libs.junit)
 }

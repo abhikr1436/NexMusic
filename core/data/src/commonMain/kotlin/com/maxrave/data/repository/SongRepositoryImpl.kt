@@ -316,6 +316,13 @@ internal class SongRepositoryImpl(
             localDataSource.resetTotalPlayTime(videoId)
         }
 
+    override suspend fun setTotalPlayTime(
+        videoId: String,
+        count: Long,
+    ) = withContext(Dispatchers.IO) {
+        localDataSource.setTotalPlayTime(videoId, count)
+    }
+
     /**
      * Resolved lazily rather than taken in the constructor: the download handler is implemented in
      * the platform media modules, and pulling it in at construction time would make this repository

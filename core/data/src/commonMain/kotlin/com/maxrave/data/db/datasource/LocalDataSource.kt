@@ -251,6 +251,11 @@ internal class LocalDataSource(
 
     suspend fun resetTotalPlayTime(videoId: String) = databaseDao.resetTotalPlayTime(videoId)
 
+    suspend fun setTotalPlayTime(
+        videoId: String,
+        count: Long,
+    ) = databaseDao.setTotalPlayTime(videoId, count)
+
     suspend fun updateCanvasUrl(
         videoId: String,
         canvasUrl: String,

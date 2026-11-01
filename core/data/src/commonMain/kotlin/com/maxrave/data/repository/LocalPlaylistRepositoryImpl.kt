@@ -94,6 +94,14 @@ internal class LocalPlaylistRepositoryImpl(
         localDataSource.updateLocalPlaylistYouTubePlaylistSyncState(id, syncState)
     }
 
+    override suspend fun setTrackOrder(
+        id: Long,
+        videoIds: List<String>,
+    ) = withContext(Dispatchers.IO) {
+        videoIds.forEachIndexed { i, videoId -> localDataSource.editPositionOfSongInPlaylist(id, videoId, i) }
+        localDataSource.updateLocalPlaylistTracks(videoIds, id)
+    }
+
     override fun downloadStateFlow(id: Long): Flow<Int> = localDataSource.getDownloadStateFlowOfLocalPlaylist(id)
 
     override fun getAllDownloadingLocalPlaylists(): Flow<List<LocalPlaylistEntity>> =

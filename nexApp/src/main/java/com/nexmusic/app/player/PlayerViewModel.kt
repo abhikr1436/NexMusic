@@ -18,6 +18,8 @@ import com.maxrave.domain.repository.SongRepository
 import com.maxrave.domain.utils.Resource
 import com.maxrave.domain.utils.isRadioQueueId
 import com.maxrave.domain.utils.toSongEntity
+import com.nexmusic.app.library.LocalImport
+import com.nexmusic.app.library.isLocalSong
 import com.nexmusic.app.ui.components.best
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -39,6 +41,7 @@ class PlayerViewModel(
     private val songRepository: SongRepository,
     private val lyricsRepository: LyricsCanvasRepository,
     private val downloads: DownloadHandler,
+    private val localImport: LocalImport,
 ) : ViewModel() {
     val nowPlaying = handler.nowPlayingState
     val control = handler.controlState
@@ -237,6 +240,14 @@ class PlayerViewModel(
         track: Track,
         state: Int,
     ) = viewModelScope.launch {
+        // An imported file has no online copy: removing it deletes the app's copy, and there is nothing to download.
+        if (isLocalSong(track.videoId)) {
+            if (state == DownloadState.STATE_DOWNLOADED) {
+                localImport.remove(track.videoId)
+                songRepository.updateDownloadState(track.videoId, DownloadState.STATE_NOT_DOWNLOADED)
+            }
+            return@launch
+        }
         when (state) {
             DownloadState.STATE_NOT_DOWNLOADED -> {
                 // The download service records progress on the song's row, so a song never played needs one first (insert ignores an existing row).

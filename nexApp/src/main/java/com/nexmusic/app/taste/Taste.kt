@@ -1,6 +1,11 @@
 package com.nexmusic.app.taste
 
 import android.content.Context
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import com.nexmusic.app.ui.theme.Accents
+import com.nexmusic.app.ui.theme.Backdrop
+import com.nexmusic.app.ui.theme.setAccentColor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +33,34 @@ class TasteStore(context: Context) {
 
     private val _theme = MutableStateFlow(runCatching { ThemeMode.valueOf(prefs.getString(THEME, null)!!) }.getOrDefault(ThemeMode.System))
     val theme: StateFlow<ThemeMode> = _theme.asStateFlow()
+
+    /** Appearance › Accent Color, as ARGB. */
+    private val _accent = MutableStateFlow(prefs.getLong(ACCENT, Accents.first().second.toArgb().toLong()))
+    val accent: StateFlow<Long> = _accent.asStateFlow()
+
+    private val _backdrop = MutableStateFlow(runCatching { Backdrop.valueOf(prefs.getString(BACKDROP, null)!!) }.getOrDefault(Backdrop.Classic))
+    val backdrop: StateFlow<Backdrop> = _backdrop.asStateFlow()
+
+    init {
+        // Before the first frame, so the app never flashes the default red.
+        setAccentColor(Color(_accent.value.toInt()))
+    }
+
+    fun setTheme(mode: ThemeMode) {
+        prefs.edit().putString(THEME, mode.name).apply()
+        _theme.value = mode
+    }
+
+    fun setAccent(argb: Long) {
+        prefs.edit().putLong(ACCENT, argb).apply()
+        _accent.value = argb
+        setAccentColor(Color(argb.toInt()))
+    }
+
+    fun setBackdrop(b: Backdrop) {
+        prefs.edit().putString(BACKDROP, b.name).apply()
+        _backdrop.value = b
+    }
 
     fun save(
         languages: List<String>,
@@ -58,6 +91,8 @@ class TasteStore(context: Context) {
         const val LANGUAGES = "languages"
         const val ARTISTS = "artists"
         const val THEME = "theme"
+        const val ACCENT = "accent"
+        const val BACKDROP = "backdrop"
 
         // Control characters can't appear in names or URLs, so they split safely.
         const val SEP = "\u001E"

@@ -97,6 +97,12 @@ interface SongRepository {
 
     suspend fun resetTotalPlayTime(videoId: String)
 
+    /** Sets a song's play count outright; account sync uses it to carry counts between devices. */
+    suspend fun setTotalPlayTime(
+        videoId: String,
+        count: Long,
+    )
+
     suspend fun updateLikeStatus(
         videoId: String,
         likeStatus: Int,

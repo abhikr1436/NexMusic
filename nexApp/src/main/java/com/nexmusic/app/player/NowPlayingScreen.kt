@@ -296,9 +296,18 @@ private fun TitleRow(
             Icon(NexIcons.PlaylistAdd, "Add to Playlist", Modifier.size(20.dp))
         }
         Spacer(Modifier.width(20.dp))
-        IconButton(onClick = onDownload, modifier = Modifier.size(36.dp).liquidGlass(glass, Capsule(), Color.White.copy(alpha = 0.16f))) {
+        // Downloaded is a filled state, like the heart: a solid white circle with a dark glyph, so it reads apart from the glass "not yet" button.
+        val saved = download == DownloadState.STATE_DOWNLOADED
+        IconButton(
+            onClick = onDownload,
+            modifier =
+                Modifier
+                    .size(36.dp)
+                    .liquidGlass(glass, Capsule(), Color.White.copy(alpha = 0.16f))
+                    .background(if (saved) Color.White else Color.Transparent, CircleShape),
+        ) {
             when (download) {
-                DownloadState.STATE_DOWNLOADED -> Icon(NexIcons.Downloaded, "Remove download", Modifier.size(20.dp))
+                DownloadState.STATE_DOWNLOADED -> Icon(NexIcons.Downloaded, "Remove download", Modifier.size(20.dp), tint = Color.Black)
                 DownloadState.STATE_NOT_DOWNLOADED -> Icon(NexIcons.Download, "Download", Modifier.size(20.dp))
                 else -> DownloadRing(videoId, Color.White, Modifier.size(20.dp))
             }

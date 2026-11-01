@@ -90,6 +90,15 @@ interface LocalPlaylistRepository {
         toIndex: Int,
     ): Flow<LocalResource<String>>
 
+    /**
+     * Puts the playlist in exactly [videoIds] order: positions 0..n-1 and the tracks list.
+     * Uses UPDATE, not an insert-replace, since a replace deletes the row and the delete trigger shifts every later song.
+     */
+    suspend fun setTrackOrder(
+        id: Long,
+        videoIds: List<String>,
+    )
+
     fun downloadStateFlow(id: Long): Flow<Int>
 
     fun getAllDownloadingLocalPlaylists(): Flow<List<LocalPlaylistEntity>>

@@ -20,7 +20,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import com.nexmusic.app.ui.components.Artwork
 import com.nexmusic.app.ui.components.NewPlaylistDialog
+import com.nexmusic.app.ui.components.GlassTextField
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateListOf
 import com.nexmusic.app.ui.icon.Add
+import com.nexmusic.app.ui.icon.AddCircle
+import com.nexmusic.app.ui.icon.Palette
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.rememberCoroutineScope
+import com.nexmusic.app.library.LocalImport
+import kotlinx.coroutines.launch
+import org.koin.compose.koinInject
 import com.nexmusic.app.ui.theme.Accent
 import com.nexmusic.app.ui.theme.LocalNex
 import com.nexmusic.app.ui.theme.NexType
@@ -77,7 +90,8 @@ private val kinds =
         Kind("playlists", "Playlists"),
         Kind("artists", "Artists"),
         Kind("albums", "Albums"),
-        Kind("songs", "Songs"),
+        // Every song here is one the user loved.
+        Kind("songs", "Liked Songs"),
         Kind("downloaded", "Downloaded"),
         Kind("recentlyPlayed", "Recently Played"),
         Kind("mostPlayed", "Most Played"),
@@ -99,8 +113,11 @@ fun LibraryScreen() {
     LazyColumn(Modifier.fillMaxSize(), state = rememberTabListState("library"), contentPadding = PaddingValues(bottom = BottomChromePadding)) {
         item { Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars)) }
         item { LargeTitle("Library") }
+        item { AccountRow { navigator.nav.navigate("account") } }
         kinds.forEachIndexed { i, k -> item { ListLink(icons[i], k.title) { navigator.library(k.route) } } }
         item { ListLink(NexIcons.Tune, "Your Taste") { navigator.editingTaste = true } }
+        item { ListLink(NexIcons.Palette, "Appearance") { navigator.nav.navigate("appearance") } }
+        item { UpdateRow { navigator.nav.navigate("update") } }
         item { SectionHeader("Recently Added") }
         if (recentlyAdded.isEmpty()) item { Message("Albums and playlists you add show up here.") }
         items(recentlyAdded.chunked(2)) { pair ->
@@ -136,6 +153,27 @@ fun LibraryListScreen(kind: String) {
     val recentlyPlayed by vm.recentlyPlayed.collectAsStateWithLifecycle()
     val mostPlayed by vm.mostPlayed.collectAsStateWithLifecycle()
 
+    // Downloaded › Import Music Files: audio from the phone, kept as downloaded songs.
+    val importer: LocalImport = koinInject()
+    val scope = rememberCoroutineScope()
+    var importing by remember { mutableStateOf(false) }
+    var imported by remember { mutableStateOf<String?>(null) }
+    val pickFiles =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (uris.isEmpty()) return@rememberLauncherForActivityResult
+            importing = true
+            scope.launch {
+                val n = importer.import(uris)
+                importing = false
+                imported =
+                    when {
+                        n == uris.size -> "Imported $n song${if (n == 1) "" else "s"}."
+                        n == 0 -> "Couldn't import ${if (uris.size == 1) "that file" else "those files"}. Is it an audio file?"
+                        else -> "Imported $n of ${uris.size}; the rest couldn't be read as audio."
+                    }
+            }
+        }
+
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = BottomChromePadding)) {
         item { Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars)) }
         item { BackBar() }
@@ -162,6 +200,14 @@ fun LibraryListScreen(kind: String) {
                 items(list) { SongRow(it.title, it.author, it.thumbnails.hiRes(), onClick = { navigator.playlist(it.id) }) }
             }
             else -> {
+                if (kind == "downloaded") {
+                    item {
+                        ListLink(NexIcons.AddCircle, if (importing) "Importing…" else "Import Music Files", trailing = {}) {
+                            if (!importing) pickFiles.launch(arrayOf("audio/*"))
+                        }
+                    }
+                    imported?.let { item { Text(it, style = NexType.Footnote, color = LocalNex.current.secondaryLabel, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) } }
+                }
                 val list =
                     when (kind) {
                         "songs" -> liked
@@ -175,7 +221,7 @@ fun LibraryListScreen(kind: String) {
     }
 }
 
-/** A playlist the user made: its songs, Play / Shuffle, and Delete at the bottom. */
+/** A playlist the user made: its songs, Play / Shuffle, Add Songs, Edit (name, remove, reorder) and Delete at the bottom. */
 @Composable
 fun LocalPlaylistScreen(id: Long) {
     val vm: LibraryViewModel = koinViewModel()
@@ -184,24 +230,65 @@ fun LocalPlaylistScreen(id: Long) {
     val mine by vm.myPlaylists.collectAsStateWithLifecycle()
     val list by remember(id) { vm.tracksOf(id) }.collectAsStateWithLifecycle(emptyList())
     val playlist = mine.firstOrNull { it.id == id }
-    val title = playlist?.title.orEmpty()
     var confirmDelete by remember { mutableStateOf(false) }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = BottomChromePadding)) {
+    // Edit mode works on a copy: Done writes it back in one go, Cancel (or Back) drops it.
+    var editing by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    val draft = remember { mutableStateListOf<SongEntity>() }
+    // Between Done and the re-read landing, keep showing the edit so the old order doesn't flash back.
+    var saving by remember { mutableStateOf(false) }
+    LaunchedEffect(list) { saving = false }
+    BackHandler(editing) { editing = false }
+    val listState = rememberLazyListState()
+    val reorder = remember { Reorder(listState, draft) }
+
+    val title = if (saving) name else playlist?.title.orEmpty()
+    val shown = if (saving) draft else list
+
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = BottomChromePadding)) {
         item { Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars)) }
-        item { BackBar() }
         item {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Artwork(playlist?.thumbnail, Modifier.padding(top = 8.dp).size(250.dp).shadow(20.dp, RoundedCornerShape(10.dp)), RoundedCornerShape(10.dp))
-                Spacer(Modifier.height(18.dp))
-                Text(title, style = NexType.Title2, textAlign = TextAlign.Center, maxLines = 2)
-                Text("${list.size} song${if (list.size == 1) "" else "s"}", style = NexType.Subhead, color = nex.secondaryLabel, modifier = Modifier.padding(top = 4.dp, bottom = 8.dp))
+            if (editing) {
+                EditBar(doneEnabled = name.isNotBlank(), onCancel = { editing = false }) {
+                    val keep = draft.map { it.videoId }.toSet()
+                    vm.saveEdits(id, name.trim(), draft.toList(), list.filter { it.videoId !in keep })
+                    saving = true
+                    editing = false
+                }
+            } else {
+                BackBar(trailing = {
+                    BarButton("Edit") {
+                        name = playlist?.title.orEmpty()
+                        draft.clear()
+                        draft.addAll(list)
+                        editing = true
+                    }
+                })
             }
         }
-        songs(list, title, "Long-press any song and choose Add to Playlist.") { vm.remove(id, it) }
         item {
-            TextButton(onClick = { confirmDelete = true }, modifier = Modifier.padding(horizontal = 8.dp, vertical = 16.dp)) {
-                Text("Delete Playlist", style = NexType.Body, color = Destructive)
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Artwork(playlist?.thumbnail, Modifier.padding(top = 8.dp).size(if (editing) 160.dp else 250.dp).shadow(20.dp, RoundedCornerShape(10.dp)), RoundedCornerShape(10.dp))
+                Spacer(Modifier.height(18.dp))
+                if (editing) {
+                    GlassTextField(name, { name = it }, "Playlist Name", autoFocus = false)
+                } else {
+                    Text(title, style = NexType.Title2, textAlign = TextAlign.Center, maxLines = 2)
+                }
+                val n = if (editing) draft.size else shown.size
+                Text("$n song${if (n == 1) "" else "s"}", style = NexType.Subhead, color = nex.secondaryLabel, modifier = Modifier.padding(top = 4.dp, bottom = 8.dp))
+            }
+        }
+        if (editing) {
+            editableSongs(draft, reorder)
+        } else {
+            item { ListLink(NexIcons.AddCircle, "Add Songs", trailing = {}) { navigator.addSongs(id) } }
+            songs(shown, title, "Tap Add Songs to fill this playlist.") { vm.remove(id, it) }
+            item {
+                TextButton(onClick = { confirmDelete = true }, modifier = Modifier.padding(horizontal = 8.dp, vertical = 16.dp)) {
+                    Text("Delete Playlist", style = NexType.Body, color = Destructive)
+                }
             }
         }
     }

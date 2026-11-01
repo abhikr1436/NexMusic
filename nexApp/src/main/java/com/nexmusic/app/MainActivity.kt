@@ -61,7 +61,8 @@ class MainActivity : ComponentActivity() {
                 val bars = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) { dark }
                 enableEdgeToEdge(bars, bars)
             }
-            NexTheme(dark) { NexApp() }
+            val backdrop by taste.backdrop.collectAsState()
+            NexTheme(dark, backdrop) { NexApp() }
         }
     }
 

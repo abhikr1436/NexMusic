@@ -72,11 +72,13 @@ fun BackBar(
     tint: Color = Accent,
     saved: Boolean? = null,
     onToggleSaved: () -> Unit = {},
+    trailing: @Composable () -> Unit = {},
 ) {
     val navigator = LocalNavigator.current
     Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(NexIcons.Back, "Back", tint = tint, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { navigator.nav.popBackStack() }.padding(9.dp))
         Spacer(Modifier.weight(1f))
+        trailing()
         if (saved != null) {
             Icon(
                 if (saved) NexIcons.Favorite else NexIcons.FavoriteBorder,

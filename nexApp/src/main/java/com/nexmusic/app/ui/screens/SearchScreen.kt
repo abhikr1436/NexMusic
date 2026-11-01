@@ -166,12 +166,13 @@ fun SearchScreen() {
 }
 
 @Composable
-private fun SearchField(
+internal fun SearchField(
     query: String,
     focusRequester: FocusRequester,
     onChange: (String) -> Unit,
     onSearch: () -> Unit,
     onFocus: (Boolean) -> Unit,
+    placeholder: String = "Artists, Songs, Lyrics, and More",
 ) {
     val nex = LocalNex.current
     val focus = LocalFocusManager.current
@@ -188,7 +189,7 @@ private fun SearchField(
         Icon(NexIcons.Search, null, tint = nex.secondaryLabel, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(6.dp))
         Box(Modifier.weight(1f)) {
-            if (query.isEmpty()) Text("Artists, Songs, Lyrics, and More", style = NexType.Body, color = nex.secondaryLabel)
+            if (query.isEmpty()) Text(placeholder, style = NexType.Body, color = nex.secondaryLabel)
             BasicTextField(
                 query,
                 onChange,
@@ -234,17 +235,25 @@ private fun SuggestionRow(
     }
 }
 
-/** iOS segmented control. */
 @Composable
 private fun ScopeBar(
     selected: SearchScope,
     onSelect: (SearchScope) -> Unit,
+) = SegmentedBar(SearchScope.entries, selected, { it.label }, onSelect)
+
+/** iOS segmented control. */
+@Composable
+internal fun <T> SegmentedBar(
+    options: List<T>,
+    selected: T,
+    label: (T) -> String,
+    onSelect: (T) -> Unit,
 ) {
     val nex = LocalNex.current
     Row(
         Modifier.padding(horizontal = 20.dp, vertical = 10.dp).fillMaxWidth().height(32.dp).clip(RoundedCornerShape(9.dp)).background(nex.fill).padding(2.dp),
     ) {
-        SearchScope.entries.forEach { s ->
+        options.forEach { s ->
             val on = s == selected
             Box(
                 Modifier
@@ -255,7 +264,7 @@ private fun ScopeBar(
                     .clickable { onSelect(s) },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(s.label, style = NexType.Footnote, color = nex.label)
+                Text(label(s), style = NexType.Footnote, color = nex.label, maxLines = 1)
             }
         }
     }

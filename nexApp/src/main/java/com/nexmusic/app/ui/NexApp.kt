@@ -83,6 +83,10 @@ import com.nexmusic.app.ui.icon.Home
 import com.nexmusic.app.ui.icon.LibraryMusic
 import com.nexmusic.app.ui.icon.NexIcons
 import com.nexmusic.app.ui.icon.Search
+import com.nexmusic.app.ui.screens.AccountScreen
+import com.nexmusic.app.ui.screens.AddSongsScreen
+import com.nexmusic.app.ui.screens.AppearanceScreen
+import com.nexmusic.app.ui.screens.UpdateScreen
 import com.nexmusic.app.ui.screens.AlbumScreen
 import com.nexmusic.app.ui.screens.ArtistScreen
 import com.nexmusic.app.ui.screens.HomeScreen
@@ -94,6 +98,7 @@ import com.nexmusic.app.ui.screens.NewScreen
 import com.nexmusic.app.ui.screens.PlaylistScreen
 import com.nexmusic.app.ui.screens.SearchScreen
 import com.nexmusic.app.ui.theme.Accent
+import com.nexmusic.app.ui.theme.LocalBackdrop
 import com.nexmusic.app.ui.theme.LocalNex
 import com.nexmusic.app.ui.theme.NexType
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -128,6 +133,8 @@ class Navigator(
     var editingTaste by mutableStateOf(false)
 
     fun localPlaylist(id: Long) = nav.navigate("local/$id")
+
+    fun addSongs(playlistId: Long) = nav.navigate("local/$playlistId/add")
 
     fun open(content: Content) {
         val browseId = content.browseId
@@ -190,8 +197,9 @@ fun NexApp() {
 
     CompositionLocalProvider(LocalNavigator provides navigator, LocalGlassOverlay provides overlay) {
         Box(Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxSize().layerBackdrop(root).background(nex.background)) {
-                NavHost(nav, startDestination = Tab.Home.route, modifier = Modifier.fillMaxSize().layerBackdrop(backdrop).background(nex.background)) {
+            val page = LocalBackdrop.current
+            Box(Modifier.fillMaxSize().layerBackdrop(root).background(page)) {
+                NavHost(nav, startDestination = Tab.Home.route, modifier = Modifier.fillMaxSize().layerBackdrop(backdrop).background(page)) {
                     composable(Tab.Home.route) { HomeScreen() }
                     composable(Tab.New.route) { NewScreen() }
                     composable(Tab.Library.route) { LibraryScreen() }
@@ -204,6 +212,10 @@ fun NexApp() {
                     }
                     composable("library/{kind}") { LibraryListScreen(it.arguments?.getString("kind").orEmpty()) }
                     composable("local/{id}") { LocalPlaylistScreen(it.arguments?.getString("id")?.toLongOrNull() ?: -1L) }
+                    composable("account") { AccountScreen() }
+                    composable("appearance") { AppearanceScreen() }
+                    composable("update") { UpdateScreen() }
+                    composable("local/{id}/add") { AddSongsScreen(it.arguments?.getString("id")?.toLongOrNull() ?: -1L) }
                 }
 
                 // Pages scroll under the clock; fade them out there like iOS's scroll-edge effect. Artist pages keep their full-bleed photo.
@@ -299,10 +311,9 @@ private fun TabBar(
                                 selected -> nav.popBackStack(tab.route, inclusive = false)
                                 else ->
                                     nav.navigate(tab.route) {
-                                        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                        // Every tab opens on its root, never on the page left open in it.
+                                        popUpTo(nav.graph.findStartDestination().id)
                                         launchSingleTop = true
-                                        // Search always opens on its field, never on the artist or album left open in it.
-                                        restoreState = tab != Tab.Search
                                     }
                             }
                         },

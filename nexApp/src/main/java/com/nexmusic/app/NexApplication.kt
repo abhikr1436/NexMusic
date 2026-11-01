@@ -6,6 +6,9 @@ import com.maxrave.common.AppIdentity
 import com.maxrave.data.di.loader.loadAllModules
 import com.nexmusic.app.di.nexModule
 import org.koin.android.ext.koin.androidContext
+import com.nexmusic.app.sync.AccountSync
+import com.nexmusic.app.update.AppUpdater
+import org.koin.core.context.GlobalContext
 import org.koin.core.context.loadKoinModules
 import org.koin.core.context.startKoin
 
@@ -25,5 +28,9 @@ class NexApplication : Application() {
             )
             loadKoinModules(nexModule)
         }
+        // Does nothing until someone signs in.
+        GlobalContext.get().get<AccountSync>().start()
+        // One quiet look at GitHub per launch, so Library can say when an update is waiting.
+        GlobalContext.get().get<AppUpdater>().check()
     }
 }
