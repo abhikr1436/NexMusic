@@ -582,7 +582,11 @@ internal class SimpleMediaSessionCallback(
             when (path.firstOrNull()) {
                 SONG -> {
                     val songId = path.getOrNull(1) ?: return@future defaultResult
-                    val firstQueue = songRepository.getSongById(songId).first()?.toTrack() ?: return@future defaultResult
+                    // Search results aren't in the DB, so fall back to the last search's tracks
+                    val firstQueue =
+                        songRepository.getSongById(songId).first()?.toTrack()
+                            ?: searchTempList.firstOrNull { it.videoId == songId }
+                            ?: return@future defaultResult
                     mediaPlayerHandler.setQueueData(
                         QueueData.Data(
                             listTracks = arrayListOf(firstQueue),
