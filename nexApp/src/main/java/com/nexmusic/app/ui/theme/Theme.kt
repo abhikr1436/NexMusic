@@ -72,8 +72,11 @@ object NexType {
 }
 
 @Composable
-fun NexTheme(content: @Composable () -> Unit) {
-    val palette = if (isSystemInDarkTheme()) Dark else Light
+fun NexTheme(
+    dark: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit,
+) {
+    val palette = if (dark) Dark else Light
     val scheme =
         if (palette.isDark) {
             darkColorScheme(primary = Accent, background = palette.background, surface = palette.background, onBackground = palette.label, onSurface = palette.label)

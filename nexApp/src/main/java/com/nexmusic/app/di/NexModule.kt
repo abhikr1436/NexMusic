@@ -5,6 +5,9 @@ import com.nexmusic.app.ui.screens.DetailViewModel
 import com.nexmusic.app.ui.screens.HomeViewModel
 import com.nexmusic.app.ui.screens.LibraryViewModel
 import com.nexmusic.app.ui.screens.SearchViewModel
+import com.nexmusic.app.taste.OnboardingViewModel
+import com.nexmusic.app.taste.TasteStore
+import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModelOf
 import org.koin.dsl.module
 
@@ -15,4 +18,6 @@ val nexModule =
         viewModelOf(::SearchViewModel)
         viewModelOf(::LibraryViewModel)
         viewModelOf(::DetailViewModel)
+        viewModelOf(::OnboardingViewModel)
+        single { TasteStore(androidContext()) }
     }

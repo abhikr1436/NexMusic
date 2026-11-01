@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
+import com.nexmusic.app.ui.components.Destructive
+import com.nexmusic.app.ui.components.GlassButton
+import com.nexmusic.app.ui.components.GlassDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +64,7 @@ import com.nexmusic.app.ui.icon.PlayArrow
 import com.nexmusic.app.ui.icon.QueueMusic
 import com.nexmusic.app.ui.icon.Shuffle
 import com.nexmusic.app.ui.icon.TrendingUp
+import com.nexmusic.app.ui.icon.Tune
 import org.koin.androidx.compose.koinViewModel
 
 private data class Kind(
@@ -97,6 +100,7 @@ fun LibraryScreen() {
         item { Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars)) }
         item { LargeTitle("Library") }
         kinds.forEachIndexed { i, k -> item { ListLink(icons[i], k.title) { navigator.library(k.route) } } }
+        item { ListLink(NexIcons.Tune, "Your Taste") { navigator.editingTaste = true } }
         item { SectionHeader("Recently Added") }
         if (recentlyAdded.isEmpty()) item { Message("Albums and playlists you add show up here.") }
         items(recentlyAdded.chunked(2)) { pair ->
@@ -197,25 +201,21 @@ fun LocalPlaylistScreen(id: Long) {
         songs(list, title, "Long-press any song and choose Add to Playlist.") { vm.remove(id, it) }
         item {
             TextButton(onClick = { confirmDelete = true }, modifier = Modifier.padding(horizontal = 8.dp, vertical = 16.dp)) {
-                Text("Delete Playlist", style = NexType.Body, color = Color(0xFFFF3B30))
+                Text("Delete Playlist", style = NexType.Body, color = Destructive)
             }
         }
     }
     if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            containerColor = nex.elevated,
-            title = { Text("Delete \"$title\"?", style = NexType.Headline) },
-            text = { Text("The songs stay in your library.", style = NexType.Subhead, color = nex.secondaryLabel) },
-            confirmButton = {
-                TextButton(onClick = {
+        GlassDialog({ confirmDelete = false }, "Delete \"$title\"?", "The songs stay in your library.") {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GlassButton("Cancel", Modifier.weight(1f)) { confirmDelete = false }
+                GlassButton("Delete", Modifier.weight(1f), color = Destructive) {
                     confirmDelete = false
                     navigator.nav.popBackStack()
                     vm.delete(id)
-                }) { Text("Delete", color = Color(0xFFFF3B30)) }
-            },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel", color = Accent) } },
-        )
+                }
+            }
+        }
     }
 }
 

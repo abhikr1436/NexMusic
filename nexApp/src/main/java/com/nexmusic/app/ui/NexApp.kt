@@ -52,6 +52,9 @@ import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.shapes.Capsule
+import com.nexmusic.app.ui.components.GlassOverlay
+import com.nexmusic.app.ui.components.GlassOverlayHost
+import com.nexmusic.app.ui.components.LocalGlassOverlay
 import com.nexmusic.app.ui.components.liquidGlass
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,6 +73,9 @@ import com.maxrave.domain.data.model.streams.YouTubeWatchEndpoint
 import com.maxrave.domain.utils.isRadioQueueId
 import com.maxrave.domain.utils.toTrack
 import com.nexmusic.app.player.MiniPlayer
+import com.nexmusic.app.taste.OnboardingScreen
+import com.nexmusic.app.taste.TasteStore
+import org.koin.compose.koinInject
 import com.nexmusic.app.player.NowPlayingScreen
 import com.nexmusic.app.player.PlayerViewModel
 import com.nexmusic.app.ui.icon.GridView
@@ -117,6 +123,9 @@ class Navigator(
     ) = nav.navigate("mood/${Uri.encode(params)}/${Uri.encode(title)}")
 
     fun library(kind: String) = nav.navigate("library/$kind")
+
+    /** Library › Your Taste reopens the first-launch questions. */
+    var editingTaste by mutableStateOf(false)
 
     fun localPlaylist(id: Long) = nav.navigate("local/$id")
 
@@ -175,49 +184,63 @@ fun NexApp() {
     // What the glass chrome (mini player, tab bar) refracts: the page scrolling beneath it.
     // layerBackdrop must wrap the background, or the glass blurs see-through text and the sharp page shows through.
     val backdrop = rememberLayerBackdrop()
+    // Everything on screen, for the glass dialogs and menus drawn over it.
+    val root = rememberLayerBackdrop()
+    val overlay = remember { GlassOverlay() }
 
-    CompositionLocalProvider(LocalNavigator provides navigator) {
-        Box(Modifier.fillMaxSize().background(nex.background)) {
-            NavHost(nav, startDestination = Tab.Home.route, modifier = Modifier.fillMaxSize().layerBackdrop(backdrop).background(nex.background)) {
-                composable(Tab.Home.route) { HomeScreen() }
-                composable(Tab.New.route) { NewScreen() }
-                composable(Tab.Library.route) { LibraryScreen() }
-                composable(Tab.Search.route) { SearchScreen() }
-                composable("album/{id}") { AlbumScreen(Uri.decode(it.arguments?.getString("id").orEmpty())) }
-                composable("playlist/{id}") { PlaylistScreen(Uri.decode(it.arguments?.getString("id").orEmpty())) }
-                composable("artist/{id}") { ArtistScreen(Uri.decode(it.arguments?.getString("id").orEmpty())) }
-                composable("mood/{params}/{title}") {
-                    MoodScreen(Uri.decode(it.arguments?.getString("params").orEmpty()), Uri.decode(it.arguments?.getString("title").orEmpty()))
+    CompositionLocalProvider(LocalNavigator provides navigator, LocalGlassOverlay provides overlay) {
+        Box(Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize().layerBackdrop(root).background(nex.background)) {
+                NavHost(nav, startDestination = Tab.Home.route, modifier = Modifier.fillMaxSize().layerBackdrop(backdrop).background(nex.background)) {
+                    composable(Tab.Home.route) { HomeScreen() }
+                    composable(Tab.New.route) { NewScreen() }
+                    composable(Tab.Library.route) { LibraryScreen() }
+                    composable(Tab.Search.route) { SearchScreen() }
+                    composable("album/{id}") { AlbumScreen(Uri.decode(it.arguments?.getString("id").orEmpty())) }
+                    composable("playlist/{id}") { PlaylistScreen(Uri.decode(it.arguments?.getString("id").orEmpty())) }
+                    composable("artist/{id}") { ArtistScreen(Uri.decode(it.arguments?.getString("id").orEmpty())) }
+                    composable("mood/{params}/{title}") {
+                        MoodScreen(Uri.decode(it.arguments?.getString("params").orEmpty()), Uri.decode(it.arguments?.getString("title").orEmpty()))
+                    }
+                    composable("library/{kind}") { LibraryListScreen(it.arguments?.getString("kind").orEmpty()) }
+                    composable("local/{id}") { LocalPlaylistScreen(it.arguments?.getString("id")?.toLongOrNull() ?: -1L) }
                 }
-                composable("library/{kind}") { LibraryListScreen(it.arguments?.getString("kind").orEmpty()) }
-                composable("local/{id}") { LocalPlaylistScreen(it.arguments?.getString("id")?.toLongOrNull() ?: -1L) }
-            }
 
-            // Pages scroll under the clock; fade them out there like iOS's scroll-edge effect. Artist pages keep their full-bleed photo.
-            val route by nav.currentBackStackEntryAsState()
-            if (route?.destination?.route?.startsWith("artist") != true) {
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(Brush.verticalGradient(0.55f to nex.background, 1f to nex.background.copy(alpha = 0f)))
-                        .windowInsetsPadding(WindowInsets.statusBars)
-                        .height(14.dp),
-                )
-            }
+                // Pages scroll under the clock; fade them out there like iOS's scroll-edge effect. Artist pages keep their full-bleed photo.
+                val route by nav.currentBackStackEntryAsState()
+                if (route?.destination?.route?.startsWith("artist") != true) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(Brush.verticalGradient(0.55f to nex.background, 1f to nex.background.copy(alpha = 0f)))
+                            .windowInsetsPadding(WindowInsets.statusBars)
+                            .height(14.dp),
+                    )
+                }
 
-            Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-                if (hasTrack) MiniPlayer(backdrop, onOpen = { showPlayer = true })
-                TabBar(nav, backdrop)
-            }
+                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+                    if (hasTrack) MiniPlayer(backdrop, onOpen = { showPlayer = true })
+                    TabBar(nav, backdrop)
+                }
 
-            AnimatedVisibility(
-                visible = showPlayer && hasTrack,
-                enter = slideInVertically(tween(380)) { it } + fadeIn(),
-                exit = slideOutVertically(tween(300)) { it } + fadeOut(),
-            ) {
-                NowPlayingScreen(onClose = { showPlayer = false })
+                AnimatedVisibility(
+                    visible = showPlayer && hasTrack,
+                    enter = slideInVertically(tween(380)) { it } + fadeIn(),
+                    exit = slideOutVertically(tween(300)) { it } + fadeOut(),
+                ) {
+                    NowPlayingScreen(onClose = { showPlayer = false })
+                }
+                BackHandler(showPlayer) { showPlayer = false }
+
+                // First launch asks what the user likes; Library › Your Taste brings it back.
+                val taste: TasteStore = koinInject()
+                val onboarded by taste.onboarded.collectAsStateWithLifecycle()
+                if (!onboarded || navigator.editingTaste) {
+                    OnboardingScreen(onDone = { navigator.editingTaste = false })
+                    BackHandler(navigator.editingTaste) { navigator.editingTaste = false }
+                }
             }
-            BackHandler(showPlayer) { showPlayer = false }
+            GlassOverlayHost(overlay, root)
         }
     }
 }

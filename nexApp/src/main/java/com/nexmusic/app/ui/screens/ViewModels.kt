@@ -25,6 +25,8 @@ import com.maxrave.domain.repository.LocalPlaylistRepository
 import com.maxrave.domain.repository.PlaylistRepository
 import com.maxrave.domain.repository.SearchRepository
 import com.maxrave.domain.repository.SongRepository
+import com.nexmusic.app.taste.PickedArtist
+import com.nexmusic.app.taste.TasteStore
 import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.utils.Resource
 import com.maxrave.domain.utils.toTrack
@@ -115,7 +117,23 @@ class HomeViewModel(
     private val home: HomeRepository,
     private val songs: SongRepository,
     private val artists: ArtistRepository,
+    private val search: SearchRepository,
+    taste: TasteStore,
 ) : ViewModel() {
+    /** Artists picked on first launch, shown as a row on Home. */
+    val yourArtists: StateFlow<List<PickedArtist>> = taste.artists
+
+    /** "Popular in <language>": top playlists for up to three of the user's languages. */
+    val popularIn: StateFlow<List<Pair<String, List<PlaylistsResult>>>> =
+        taste.languages
+            .mapLatest { langs ->
+                coroutineScope {
+                    langs.take(3).map { l ->
+                        async { l to runCatching { search.getSearchDataPlaylist("top $l songs").first().data.orEmpty() }.getOrDefault(emptyList()).take(10) }
+                    }.awaitAll()
+                }.filter { it.second.isNotEmpty() }
+            }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     // Lazy: only Home subscribes, so the New tab's instance never reads history or fetches mixes.
     val recentlyPlayed: StateFlow<List<SongEntity>> =
         songs.recentlyPlayed().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -132,16 +150,17 @@ class HomeViewModel(
 
     /** Newest singles and albums from the six artists played most in recent history; only the New tab subscribes. */
     val newForYou: StateFlow<List<Release>> =
-        recentlyPlayed
-            .map { played ->
+        combine(recentlyPlayed, taste.artists) { played, picks ->
+            // Artists the user picked come first, then the ones they actually play most.
+            val fromPlays =
                 played
                     .mapNotNull { s -> s.artistId?.firstOrNull { it.startsWith("UC") }?.let { it to s.totalPlayTime } }
                     .groupBy({ it.first }, { it.second })
                     .entries
                     .sortedByDescending { it.value.sum() }
-                    .take(6)
                     .map { it.key }
-            }.distinctUntilChanged()
+            (picks.map { it.id } + fromPlays).distinct().take(8)
+        }.distinctUntilChanged()
             .mapLatest { releasesOf(it) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -239,6 +258,15 @@ class SearchViewModel(
     val history = MutableStateFlow<List<String>>(emptyList())
     private val _results = MutableStateFlow<Load<SearchResults>?>(null)
     val results: StateFlow<Load<SearchResults>?> = _results.asStateFlow()
+
+    /** YouTube Music's completions for what's typed so far. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val suggestions: StateFlow<List<String>> =
+        query
+            .debounce(150)
+            .mapLatest { q ->
+                if (q.isBlank()) emptyList() else runCatching { search.getSuggestQuery(q.trim()).first().data?.queries.orEmpty() }.getOrDefault(emptyList()).take(6)
+            }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
         loadInto(categories) { home.getMoodAndMomentsData() }

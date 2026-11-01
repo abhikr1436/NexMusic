@@ -28,6 +28,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -69,6 +77,9 @@ fun SearchScreen() {
     val categories by vm.categories.collectAsStateWithLifecycle()
     val navigator = LocalNavigator.current
     val history by vm.history.collectAsStateWithLifecycle()
+    val suggestions by vm.suggestions.collectAsStateWithLifecycle()
+    var typing by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
     val fieldFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     // Tapping the Search tab again, like iOS: back to the top, field focused, keyboard up.
@@ -81,7 +92,17 @@ fun SearchScreen() {
     LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = BottomChromePadding)) {
         item { Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars)) }
         item { LargeTitle("Search") }
-        item { SearchField(query, fieldFocus, onChange = { vm.query.value = it }, onSearch = vm::saveQuery) }
+        item { SearchField(query, fieldFocus, onChange = { vm.query.value = it }, onSearch = vm::saveQuery, onFocus = { typing = it }) }
+        // Suggestions while typing, like Apple Music; picking one runs it and drops the keyboard.
+        if (typing && query.isNotBlank()) {
+            items(suggestions, key = { "s-$it" }) { s ->
+                SuggestionRow(s, query) {
+                    vm.query.value = s
+                    vm.saveQuery()
+                    focusManager.clearFocus()
+                }
+            }
+        }
         if (query.isBlank()) {
             if (history.isNotEmpty()) {
                 item {
@@ -150,6 +171,7 @@ private fun SearchField(
     focusRequester: FocusRequester,
     onChange: (String) -> Unit,
     onSearch: () -> Unit,
+    onFocus: (Boolean) -> Unit,
 ) {
     val nex = LocalNex.current
     val focus = LocalFocusManager.current
@@ -178,12 +200,37 @@ private fun SearchField(
                     onSearch()
                     focus.clearFocus()
                 }),
-                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester).onFocusChanged { onFocus(it.isFocused) },
             )
         }
         if (query.isNotEmpty()) {
             Icon(NexIcons.Cancel, "Clear", tint = nex.secondaryLabel, modifier = Modifier.size(20.dp).clickable { onChange("") })
         }
+    }
+}
+
+/** One suggested search: the typed part plain, the completion bold, as iOS shows it. */
+@Composable
+private fun SuggestionRow(
+    suggestion: String,
+    typed: String,
+    onClick: () -> Unit,
+) {
+    val nex = LocalNex.current
+    val t = typed.trim()
+    val text =
+        buildAnnotatedString {
+            if (suggestion.startsWith(t, ignoreCase = true)) {
+                append(suggestion.take(t.length))
+                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(suggestion.drop(t.length)) }
+            } else {
+                append(suggestion)
+            }
+        }
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(NexIcons.Search, null, tint = nex.secondaryLabel, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(text, style = NexType.Body, color = nex.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

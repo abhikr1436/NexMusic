@@ -77,7 +77,18 @@ fun HomeScreen() {
     val feed by vm.feed.collectAsStateWithLifecycle()
     val recent by vm.recentlyPlayed.collectAsStateWithLifecycle()
     val mixes by vm.madeForYou.collectAsStateWithLifecycle()
+    val yourArtists by vm.yourArtists.collectAsStateWithLifecycle()
+    val popularIn by vm.popularIn.collectAsStateWithLifecycle()
+    val navigator = LocalNavigator.current
     FeedPage("Home", "home", feed, onRetry = vm::refresh) {
+        if (yourArtists.isNotEmpty()) {
+            item(key = "h-artists") { SectionHeader("Your Artists") }
+            item(key = "c-artists") {
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(yourArtists, key = { it.id }) { a -> CoverCard(a.thumb, a.name, null, 110.dp, circle = true) { navigator.artist(a.id) } }
+                }
+            }
+        }
         if (mixes.isNotEmpty()) {
             item(key = "h-made") { SectionHeader("Made For You") }
             item(key = "c-made") {
@@ -101,6 +112,14 @@ fun HomeScreen() {
                         val s = shown[i]
                         CoverCard(s.thumbnails?.hiRes(), s.title, s.artistName?.joinToString(), 160.dp, videoId = s.videoId) { player.playList(recent.toArrayListTrack(), i, "Recently Played", null) }
                     }
+                }
+            }
+        }
+        popularIn.forEach { (language, lists) ->
+            item(key = "h-pop-$language") { SectionHeader("Popular in $language") }
+            item(key = "c-pop-$language") {
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(lists, key = { it.browseId }) { p -> CoverCard(p.thumbnails.best(), p.title, p.author, 160.dp) { navigator.playlist(p.browseId) } }
                 }
             }
         }

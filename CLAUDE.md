@@ -15,6 +15,8 @@ NexMusic: an Android-only music streaming app (package `com.nexmusic.app`) with 
 - One `PlayerViewModel` lives in the activity's store (created outside the NavHost). Screens reach it through `LocalNavigator.current.player`, never their own `koinViewModel()` (that would make a second instance).
 - Start playback the core's way: `handler.reset()` → `setQueueData(...)` → `loadMediaItem(track, Config.*_CLICK, index)` (see `PlayerViewModel.start`). Seeking takes a percentage (0–100).
 - Colours/type: `ui/theme/Theme.kt` (`LocalNex` palette, `NexType` iOS text styles, `Accent`). Shared pieces in `ui/components/Components.kt`.
+- Glass: chrome uses `Modifier.liquidGlass` (Kyant backdrop) over the NavHost's `layerBackdrop`, which must wrap the background. Dialogs and menus use `GlassDialog` / `GlassMenu` / `GlassButton` / `GlassTextField` (`ui/components/Glass.kt`), drawn in-window by `GlassOverlayHost`; never `AlertDialog` / `DropdownMenu`, whose separate windows can't be glass.
+- Taste: first launch runs `taste/OnboardingScreen` (languages, artists, theme), saved in `TasteStore` (SharedPreferences). Home's Your Artists / Popular in rows, New's New From Your Artists and the app theme read it; Library › Your Taste reopens it.
 - Icons: Material Symbols Rounded as `ImageVector`, one file each in `ui/icon/`, used as `NexIcons.<Name>` with a per-icon import. Fetch with
   `curl -sfL --compressed "https://fonts.gstatic.com/render/v1/Material+Symbols+Rounded/24dp/<symbol>.kt?var=opsz,wght,FILL,GRAD,ROND@24,400,1,0,50"`
   then rename the package and property like the existing files.

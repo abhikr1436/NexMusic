@@ -22,8 +22,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,7 +36,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -211,6 +212,8 @@ fun SongRow(
 ) {
     val nex = LocalNex.current
     var menuOpen by remember { mutableStateOf(false) }
+    // Where the row is on screen, so the glass menu can open right next to it.
+    var bounds by remember { mutableStateOf(Rect.Zero) }
     val haptics = LocalHapticFeedback.current
     val press =
         if (menu == null) {
@@ -221,8 +224,8 @@ fun SongRow(
                 menuOpen = true
             })
         }
-    Column(Modifier.fillMaxWidth().then(press)) {
-        if (menu != null) SongMenu(menu, menuOpen, onRemove) { menuOpen = false }
+    Column(Modifier.fillMaxWidth().onGloballyPositioned { bounds = it.boundsInRoot() }.then(press)) {
+        if (menu != null) SongMenu(menu, menuOpen, bounds, onRemove) { menuOpen = false }
         Row(Modifier.padding(start = 20.dp, end = 12.dp).height(if (leadingNumber != null) 50.dp else 60.dp), verticalAlignment = Alignment.CenterVertically) {
             if (leadingNumber != null) {
                 Text("$leadingNumber", style = NexType.Body, color = nex.secondaryLabel, modifier = Modifier.width(32.dp))
@@ -252,6 +255,7 @@ fun SongRow(
 private fun SongMenu(
     track: Track,
     open: Boolean,
+    anchor: Rect,
     onRemove: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
@@ -261,23 +265,18 @@ private fun SongMenu(
     if (picking) AddToPlaylistDialog(track) { picking = false }
     val albumId = track.album?.id
     val artistId = track.artists?.firstOrNull { !it.id.isNullOrEmpty() }?.id
-    DropdownMenu(open, onDismiss, containerColor = LocalNex.current.elevated) {
-        @Composable
-        fun entry(
-            text: String,
-            action: () -> Unit,
-        ) = DropdownMenuItem(text = { Text(text, style = NexType.Body) }, onClick = {
-            onDismiss()
-            action()
-        })
-        entry("Play Next") { navigator.player.playNext(track) }
-        entry("Add to Queue") { navigator.player.addToQueue(track) }
-        entry("Add to Playlist…") { picking = true }
-        entry(if (liked) "Remove Love" else "Love") { navigator.player.setLiked(track, !liked) }
-        if (onRemove != null) entry("Remove from Playlist", onRemove)
-        if (!albumId.isNullOrEmpty()) entry("Go to Album") { navigator.album(albumId) }
-        if (artistId != null) entry("Go to Artist") { navigator.artist(artistId) }
-    }
+    if (!open) return
+    val items =
+        buildList<Pair<String, () -> Unit>> {
+            add("Play Next" to { navigator.player.playNext(track) })
+            add("Add to Queue" to { navigator.player.addToQueue(track) })
+            add("Add to Playlist…" to { picking = true })
+            add((if (liked) "Remove Love" else "Love") to { navigator.player.setLiked(track, !liked) })
+            if (!albumId.isNullOrEmpty()) add("Go to Album" to { navigator.album(albumId) })
+            if (artistId != null) add("Go to Artist" to { navigator.artist(artistId) })
+            if (onRemove != null) add("Remove from Playlist" to onRemove)
+        }
+    GlassMenu(anchor, onDismiss, items, destructive = setOf("Remove from Playlist"))
 }
 
 /** Apple's grey capsule with an accent glyph: the Play / Shuffle pair on album pages. */

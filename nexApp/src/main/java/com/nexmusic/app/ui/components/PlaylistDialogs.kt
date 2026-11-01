@@ -1,6 +1,7 @@
 package com.nexmusic.app.ui.components
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,16 +12,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,10 +22,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -50,35 +40,20 @@ fun NewPlaylistDialog(
     onDismiss: () -> Unit,
     onCreate: (String) -> Unit,
 ) {
-    val nex = LocalNex.current
     var name by rememberSaveable { mutableStateOf("") }
-    val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focus.requestFocus() }
     val create = {
         if (name.isNotBlank()) {
             onCreate(name.trim())
             onDismiss()
         }
     }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = nex.elevated,
-        title = { Text("New Playlist", style = NexType.Headline) },
-        text = {
-            OutlinedTextField(
-                name,
-                { name = it },
-                placeholder = { Text("Playlist Name", color = nex.tertiaryLabel) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { create() }),
-                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent, cursorColor = Accent),
-                modifier = Modifier.fillMaxWidth().focusRequester(focus),
-            )
-        },
-        confirmButton = { TextButton(onClick = create, enabled = name.isNotBlank()) { Text("Create", style = NexType.Headline, color = if (name.isNotBlank()) Accent else nex.tertiaryLabel) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = Accent) } },
-    )
+    GlassDialog(onDismiss, "New Playlist") {
+        GlassTextField(name, { name = it }, "Playlist Name", onDone = create)
+        Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            GlassButton("Cancel", Modifier.weight(1f), onClick = onDismiss)
+            GlassButton("Create", Modifier.weight(1f), enabled = name.isNotBlank(), onClick = create)
+        }
+    }
 }
 
 /** Picks one of the user's playlists for [track], or makes a new one with it in. */
@@ -89,30 +64,23 @@ fun AddToPlaylistDialog(
 ) {
     val vm: LibraryViewModel = koinViewModel()
     val playlists by vm.myPlaylists.collectAsStateWithLifecycle()
-    val nex = LocalNex.current
     var naming by remember { mutableStateOf(false) }
     if (naming) {
         NewPlaylistDialog(onDismiss) { vm.create(it, track) }
         return
     }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = nex.elevated,
-        title = { Text("Add to Playlist", style = NexType.Headline) },
-        text = {
-            LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                item { PickerRow(null, "New Playlist…", isNew = true) { naming = true } }
-                items(playlists, key = { it.id }) { p ->
-                    PickerRow(p.thumbnail, p.title) {
-                        vm.add(p.id, track)
-                        onDismiss()
-                    }
+    GlassDialog(onDismiss, "Add to Playlist") {
+        LazyColumn(Modifier.heightIn(max = 360.dp)) {
+            item { PickerRow(null, "New Playlist…", isNew = true) { naming = true } }
+            items(playlists, key = { it.id }) { p ->
+                PickerRow(p.thumbnail, p.title) {
+                    vm.add(p.id, track)
+                    onDismiss()
                 }
             }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = Accent) } },
-    )
+        }
+        GlassButton("Cancel", Modifier.fillMaxWidth().padding(top = 12.dp), onClick = onDismiss)
+    }
 }
 
 @Composable
