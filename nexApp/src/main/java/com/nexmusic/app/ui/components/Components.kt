@@ -3,6 +3,7 @@ package com.nexmusic.app.ui.components
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -21,13 +22,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,7 +40,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -160,9 +167,22 @@ fun SongRow(
     playing: Boolean = false,
     divider: Boolean = true,
     trailing: @Composable () -> Unit = {},
+    menu: Track? = null,
 ) {
     val nex = LocalNex.current
-    Column(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    val press =
+        if (menu == null) {
+            Modifier.clickable(onClick = onClick)
+        } else {
+            Modifier.combinedClickable(onClick = onClick, onLongClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                menuOpen = true
+            })
+        }
+    Column(Modifier.fillMaxWidth().then(press)) {
+        if (menu != null) SongMenu(menu, menuOpen) { menuOpen = false }
         Row(Modifier.padding(start = 20.dp, end = 12.dp).height(if (leadingNumber != null) 50.dp else 60.dp), verticalAlignment = Alignment.CenterVertically) {
             if (leadingNumber != null) {
                 Text("$leadingNumber", style = NexType.Body, color = nex.secondaryLabel, modifier = Modifier.width(32.dp))
@@ -179,6 +199,32 @@ fun SongRow(
             trailing()
         }
         if (divider) HorizontalDivider(Modifier.padding(start = if (leadingNumber != null) 52.dp else 80.dp), thickness = 0.5.dp, color = nex.separator)
+    }
+}
+
+/** Long-press actions for a song, like Apple's context menu. */
+@Composable
+private fun SongMenu(
+    track: Track,
+    open: Boolean,
+    onDismiss: () -> Unit,
+) {
+    val navigator = LocalNavigator.current
+    val albumId = track.album?.id
+    val artistId = track.artists?.firstOrNull { !it.id.isNullOrEmpty() }?.id
+    DropdownMenu(open, onDismiss, containerColor = LocalNex.current.elevated) {
+        @Composable
+        fun entry(
+            text: String,
+            action: () -> Unit,
+        ) = DropdownMenuItem(text = { Text(text, style = NexType.Body) }, onClick = {
+            onDismiss()
+            action()
+        })
+        entry("Play Next") { navigator.player.playNext(track) }
+        entry("Add to Queue") { navigator.player.addToQueue(track) }
+        if (!albumId.isNullOrEmpty()) entry("Go to Album") { navigator.album(albumId) }
+        if (artistId != null) entry("Go to Artist") { navigator.artist(artistId) }
     }
 }
 

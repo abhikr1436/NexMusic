@@ -142,6 +142,7 @@ private fun LazyListScope.trackList(
             leadingNumber = if (numbered) i + 1 else null,
             playing = t.videoId == playingId,
             trailing = { DownloadButton(t) },
+            menu = t,
         )
     }
 }
@@ -263,7 +264,7 @@ fun ArtistScreen(id: String) {
                 if (topSongs.isNotEmpty()) {
                     item { SectionHeader("Top Songs") }
                     itemsIndexed(topSongs.take(10)) { i, t ->
-                        SongRow(t.title, t.album?.name, t.thumbnails.best(), onClick = { navigator.player.playList(topSongs, i, "${a.name} Top Songs", null) }, trailing = { DownloadButton(t) })
+                        SongRow(t.title, t.album?.name, t.thumbnails.best(), onClick = { navigator.player.playList(topSongs, i, "${a.name} Top Songs", null) }, trailing = { DownloadButton(t) }, menu = t)
                     }
                 }
                 a.albums?.results?.takeIf { it.isNotEmpty() }?.let { list ->

@@ -25,14 +25,18 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -71,6 +75,8 @@ import com.nexmusic.app.ui.screens.SearchScreen
 import com.nexmusic.app.ui.theme.Accent
 import com.nexmusic.app.ui.theme.LocalNex
 import com.nexmusic.app.ui.theme.NexType
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.filter
 import org.koin.androidx.compose.koinViewModel
 
 /** Where pages go and how things start playing — everything a card or row needs. */
@@ -78,6 +84,9 @@ class Navigator(
     val nav: NavController,
     val player: PlayerViewModel,
 ) {
+    /** Route of a tab tapped while already open; Search focuses its field on this. */
+    val reselected = MutableSharedFlow<String>(extraBufferCapacity = 1)
+
     fun album(id: String) = nav.navigate("album/${Uri.encode(id)}")
 
     fun playlist(id: String) {
@@ -107,6 +116,24 @@ class Navigator(
 }
 
 val LocalNavigator = staticCompositionLocalOf<Navigator> { error("No navigator") }
+
+/** A tab's list: tapping that tab again scrolls it back to the top, then runs [then]. */
+@Composable
+fun rememberTabListState(
+    route: String,
+    then: suspend () -> Unit = {},
+): LazyListState {
+    val state = rememberLazyListState()
+    val navigator = LocalNavigator.current
+    val after by rememberUpdatedState(then)
+    LaunchedEffect(navigator, route) {
+        navigator.reselected.filter { it == route }.collect {
+            state.animateScrollToItem(0)
+            after()
+        }
+    }
+    return state
+}
 
 private enum class Tab(
     val route: String,
@@ -168,6 +195,7 @@ val BottomChromePadding = 150.dp
 @Composable
 private fun TabBar(nav: NavController) {
     val nex = LocalNex.current
+    val navigator = LocalNavigator.current
     val entry by nav.currentBackStackEntryAsState()
     val current = entry?.destination?.route
     // Tabs stay lit while a page pushed from them is open.
@@ -183,7 +211,10 @@ private fun TabBar(nav: NavController) {
                     Modifier
                         .weight(1f)
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                            if (current == tab.route) return@clickable
+                            if (current == tab.route) {
+                                navigator.reselected.tryEmit(tab.route)
+                                return@clickable
+                            }
                             nav.navigate(tab.route) {
                                 popUpTo(nav.graph.findStartDestination().id) { saveState = true }
                                 launchSingleTop = true

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -26,9 +27,15 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,8 +46,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.maxrave.domain.data.model.home.Content
 import com.maxrave.domain.data.model.home.HomeItem
+import com.maxrave.domain.utils.toArrayListTrack
+import com.maxrave.domain.utils.toTrack
 import com.nexmusic.app.ui.BottomChromePadding
 import com.nexmusic.app.ui.LocalNavigator
+import com.nexmusic.app.ui.rememberTabListState
 import com.nexmusic.app.ui.components.Artwork
 import com.nexmusic.app.ui.components.CoverCard
 import com.nexmusic.app.ui.components.LargeTitle
@@ -49,6 +59,7 @@ import com.nexmusic.app.ui.components.Message
 import com.nexmusic.app.ui.components.SectionHeader
 import com.nexmusic.app.ui.components.SongRow
 import com.nexmusic.app.ui.components.best
+import com.nexmusic.app.ui.components.hiRes
 import com.nexmusic.app.ui.components.pressable
 import com.nexmusic.app.ui.theme.NexType
 import org.koin.androidx.compose.koinViewModel
@@ -64,7 +75,36 @@ fun HomeScreen() {
     val vm: HomeViewModel = koinViewModel()
     LaunchedEffect(Unit) { vm.ensureHome() }
     val feed by vm.feed.collectAsStateWithLifecycle()
-    FeedPage("Home", feed, onRetry = vm::refresh)
+    val recent by vm.recentlyPlayed.collectAsStateWithLifecycle()
+    val mixes by vm.madeForYou.collectAsStateWithLifecycle()
+    FeedPage("Home", "home", feed, onRetry = vm::refresh) {
+        if (mixes.isNotEmpty()) {
+            item(key = "h-made") { SectionHeader("Made For You") }
+            item(key = "c-made") {
+                val player = LocalNavigator.current.player
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(mixes) { m ->
+                        CoverCard(m.art, m.title, m.subtitle, 160.dp) {
+                            if (m.radio) player.playRadio(m.tracks.first()) else player.playList(m.tracks, 0, m.title, null)
+                        }
+                    }
+                }
+            }
+        }
+        if (recent.isNotEmpty()) {
+            item(key = "h-recent") { SectionHeader("Recently Played") }
+            item(key = "c-recent") {
+                val player = LocalNavigator.current.player
+                val shown = recent.take(20)
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(shown.size) { i ->
+                        val s = shown[i]
+                        CoverCard(s.thumbnails?.hiRes(), s.title, s.artistName?.joinToString(), 160.dp) { player.playList(recent.toArrayListTrack(), i, "Recently Played", null) }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -72,18 +112,46 @@ fun NewScreen() {
     val vm: HomeViewModel = koinViewModel()
     LaunchedEffect(Unit) { vm.ensureNew() }
     val feed by vm.newReleases.collectAsStateWithLifecycle()
-    FeedPage("New", feed, onRetry = vm::refreshNew)
+    FeedPage("New", "new", feed, onRetry = vm::refreshNew)
 }
 
 @Composable
 private fun FeedPage(
     title: String,
+    route: String,
     feed: Load<List<HomeItem>>,
     onRetry: () -> Unit,
+    personal: LazyListScope.() -> Unit = {},
 ) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = BottomChromePadding)) {
+    // Only a pull shows the indicator; the first load has its own spinner in the list.
+    var pulled by remember { mutableStateOf(false) }
+    val refreshing = pulled && feed is Load.Loading
+    val pull = rememberPullToRefreshState()
+    PullToRefreshBox(
+        refreshing,
+        onRefresh = {
+            pulled = true
+            onRetry()
+        },
+        state = pull,
+        indicator = {
+            PullToRefreshDefaults.Indicator(state = pull, isRefreshing = refreshing, modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.statusBars))
+        },
+    ) { FeedList(title, route, feed, onRetry, personal) }
+}
+
+@Composable
+private fun FeedList(
+    title: String,
+    route: String,
+    feed: Load<List<HomeItem>>,
+    onRetry: () -> Unit,
+    personal: LazyListScope.() -> Unit,
+) {
+    LazyColumn(Modifier.fillMaxSize(), state = rememberTabListState(route), contentPadding = PaddingValues(bottom = BottomChromePadding)) {
         item { Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars)) }
         item { LargeTitle(title) }
+        personal()
         when (feed) {
             Load.Loading -> item { Loading() }
             is Load.Failed -> item { Message("Couldn't load. Tap to try again.", Modifier.clickable(onClick = onRetry)) }
@@ -130,7 +198,7 @@ private fun SongGrid(contents: List<Content>) {
     LazyHorizontalGrid(GridCells.Fixed(4), Modifier.height(244.dp)) {
         items(contents) { c ->
             Box(Modifier.width(330.dp)) {
-                SongRow(c.title, c.subtitle, c.thumbnails.best(), onClick = { navigator.open(c) })
+                SongRow(c.title, c.subtitle, c.thumbnails.best(), onClick = { navigator.open(c) }, menu = c.videoId?.let { c.toTrack() })
             }
         }
     }

@@ -25,20 +25,26 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.maxrave.domain.utils.toTrack
 import com.nexmusic.app.ui.BottomChromePadding
 import com.nexmusic.app.ui.LocalNavigator
+import com.nexmusic.app.ui.rememberTabListState
 import com.nexmusic.app.ui.components.DownloadButton
 import com.nexmusic.app.ui.components.LargeTitle
+import com.nexmusic.app.ui.components.ListLink
 import com.nexmusic.app.ui.components.Loading
 import com.nexmusic.app.ui.components.Message
 import com.nexmusic.app.ui.components.SectionHeader
@@ -46,6 +52,7 @@ import com.nexmusic.app.ui.components.SongRow
 import com.nexmusic.app.ui.components.best
 import com.nexmusic.app.ui.components.pressable
 import com.nexmusic.app.ui.icon.Cancel
+import com.nexmusic.app.ui.icon.History
 import com.nexmusic.app.ui.icon.NexIcons
 import com.nexmusic.app.ui.icon.Search
 import com.nexmusic.app.ui.theme.Accent
@@ -61,12 +68,30 @@ fun SearchScreen() {
     val results by vm.results.collectAsStateWithLifecycle()
     val categories by vm.categories.collectAsStateWithLifecycle()
     val navigator = LocalNavigator.current
+    val history by vm.history.collectAsStateWithLifecycle()
+    val fieldFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    // Tapping the Search tab again, like iOS: back to the top, field focused, keyboard up.
+    val listState =
+        rememberTabListState("search") {
+            fieldFocus.requestFocus()
+            keyboard?.show()
+        }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = BottomChromePadding)) {
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = BottomChromePadding)) {
         item { Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars)) }
         item { LargeTitle("Search") }
-        item { SearchField(query, onChange = { vm.query.value = it }) }
+        item { SearchField(query, fieldFocus, onChange = { vm.query.value = it }, onSearch = vm::saveQuery) }
         if (query.isBlank()) {
+            if (history.isNotEmpty()) {
+                item {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Box(Modifier.weight(1f)) { SectionHeader("Recent Searches") }
+                        Text("Clear", style = NexType.Body, color = Accent, modifier = Modifier.padding(end = 20.dp, bottom = 12.dp).clickable { vm.clearHistory() })
+                    }
+                }
+                items(history) { q -> ListLink(NexIcons.History, q, trailing = {}) { vm.query.value = q } }
+            }
             item { SectionHeader("Browse Categories") }
             when (val c = categories) {
                 Load.Loading -> item { Loading() }
@@ -87,16 +112,28 @@ fun SearchScreen() {
                 is Load.Ready -> {
                     val v = r.value
                     items(v.songs) { s ->
-                        SongRow(s.title.orEmpty(), "Song · " + s.artists?.joinToString { it.name }.orEmpty(), s.thumbnails.best(), onClick = { navigator.player.playRadio(s.toTrack()) }, trailing = { DownloadButton(s.toTrack()) })
+                        SongRow(s.title.orEmpty(), "Song · " + s.artists?.joinToString { it.name }.orEmpty(), s.thumbnails.best(), onClick = {
+                            vm.saveQuery()
+                            navigator.player.playRadio(s.toTrack())
+                        }, trailing = { DownloadButton(s.toTrack()) }, menu = s.toTrack())
                     }
                     items(v.albums) { a ->
-                        SongRow(a.title, "${a.type} · " + a.artists.joinToString { it.name }, a.thumbnails.best(), onClick = { navigator.album(a.browseId) })
+                        SongRow(a.title, "${a.type} · " + a.artists.joinToString { it.name }, a.thumbnails.best(), onClick = {
+                            vm.saveQuery()
+                            navigator.album(a.browseId)
+                        })
                     }
                     items(v.artists) { a ->
-                        SongRow(a.artist, "Artist", a.thumbnails.best(), onClick = { navigator.artist(a.browseId) })
+                        SongRow(a.artist, "Artist", a.thumbnails.best(), onClick = {
+                            vm.saveQuery()
+                            navigator.artist(a.browseId)
+                        })
                     }
                     items(v.playlists) { p ->
-                        SongRow(p.title, "Playlist · ${p.author}", p.thumbnails.best(), onClick = { navigator.playlist(p.browseId) })
+                        SongRow(p.title, "Playlist · ${p.author}", p.thumbnails.best(), onClick = {
+                            vm.saveQuery()
+                            navigator.playlist(p.browseId)
+                        })
                     }
                     if (v.songs.isEmpty() && v.albums.isEmpty() && v.artists.isEmpty() && v.playlists.isEmpty()) {
                         item { Message("No results for \"$query\"") }
@@ -110,7 +147,9 @@ fun SearchScreen() {
 @Composable
 private fun SearchField(
     query: String,
+    focusRequester: FocusRequester,
     onChange: (String) -> Unit,
+    onSearch: () -> Unit,
 ) {
     val nex = LocalNex.current
     val focus = LocalFocusManager.current
@@ -135,8 +174,11 @@ private fun SearchField(
                 textStyle = NexType.Body.copy(color = nex.label),
                 cursorBrush = SolidColor(Accent),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
-                modifier = Modifier.fillMaxWidth(),
+                keyboardActions = KeyboardActions(onSearch = {
+                    onSearch()
+                    focus.clearFocus()
+                }),
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
             )
         }
         if (query.isNotEmpty()) {

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.maxrave.domain.data.entities.AlbumEntity
 import com.maxrave.domain.data.entities.ArtistEntity
 import com.maxrave.domain.data.entities.PlaylistEntity
+import com.maxrave.domain.data.entities.SearchHistory
 import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.model.browse.album.AlbumBrowse
 import com.maxrave.domain.data.model.browse.artist.ArtistBrowse
@@ -22,10 +23,18 @@ import com.maxrave.domain.repository.HomeRepository
 import com.maxrave.domain.repository.PlaylistRepository
 import com.maxrave.domain.repository.SearchRepository
 import com.maxrave.domain.repository.SongRepository
+import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.utils.Resource
+import com.maxrave.domain.utils.toTrack
 import com.maxrave.domain.utils.toAlbumEntity
 import com.maxrave.domain.utils.toPlaylistEntity
+import com.nexmusic.app.ui.components.best
+import com.nexmusic.app.ui.components.hiRes
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -34,8 +43,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -62,9 +75,70 @@ private fun <T> ViewModel.loadInto(
     viewModelScope.launch { target.value = source().load() }
 }
 
+/**
+ * Every song played, last played first: a play stamps `inLibrary` and bumps `totalPlayTime`.
+ * `getAllSongs` reads once, so Room's most-played Flow (which re-emits on any song-table write) re-runs it.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+fun SongRepository.recentlyPlayed(): Flow<List<SongEntity>> =
+    getMostPlayedSongs().flatMapLatest { getAllSongs(100) }.map { list -> list.filter { it.totalPlayTime > 0 } }
+
+/** A Made For You card: a list to play, or one seed song whose radio to start. */
+data class Mix(
+    val title: String,
+    val subtitle: String,
+    val art: String?,
+    val tracks: List<Track>,
+    val radio: Boolean = false,
+)
+
+@OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel(
     private val home: HomeRepository,
+    private val songs: SongRepository,
 ) : ViewModel() {
+    // Lazy: only Home subscribes, so the New tab's instance never reads history or fetches mixes.
+    val recentlyPlayed: StateFlow<List<SongEntity>> =
+        songs.recentlyPlayed().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Taste = the last 100 songs played, weighted by plays, plus loved songs (a heart counts as 3 plays). */
+    val madeForYou: StateFlow<List<Mix>> =
+        combine(recentlyPlayed, songs.getLikedSongs()) { played, liked ->
+            (played + liked).distinctBy { it.videoId }.sortedByDescending { it.totalPlayTime + if (it.liked) 3 else 0 }
+        }
+            // Re-fetch only when the favourites change, not on every play.
+            .distinctUntilChangedBy { top -> top.take(5).map { it.videoId } }
+            .mapLatest { mixes(it) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private suspend fun mixes(top: List<SongEntity>): List<Mix> {
+        if (top.isEmpty()) return emptyList()
+        val heard = top.map { it.videoId }.toSet()
+        // Radio of each of the top 3 songs, interleaved, minus anything already played.
+        val discovery =
+            coroutineScope {
+                top.take(3).map { s -> async { runCatching { songs.getRelatedData(s.videoId).firstOrNull()?.data?.first }.getOrNull().orEmpty() } }.awaitAll()
+            }.flatMap { it.withIndex() }
+                .sortedBy { it.index }
+                .map { it.value }
+                .filter { it.videoId !in heard }
+                .distinctBy { it.videoId }
+                .take(40)
+        val stations =
+            top
+                .filter { !it.artistName.isNullOrEmpty() }
+                .groupBy { it.artistName!!.first() }
+                .entries
+                .sortedByDescending { e -> e.value.sumOf { it.totalPlayTime } }
+                .take(4)
+                .map { (artist, list) -> Mix("$artist Station", "Based on your listening", list.first().thumbnails?.hiRes(), listOf(list.first().toTrack()), radio = true) }
+        val replay = top.filter { it.totalPlayTime > 0 }.take(50)
+        return listOfNotNull(
+            discovery.takeIf { it.isNotEmpty() }?.let { Mix("Discovery Mix", "New music picked for you", it.first().thumbnails.best(), it) },
+            replay.takeIf { it.isNotEmpty() }?.let { Mix("Replay", "Your most played", it.first().thumbnails?.hiRes(), it.map { s -> s.toTrack() }) },
+        ) + stations
+    }
+
     val feed = MutableStateFlow<Load<List<HomeItem>>>(Load.Loading)
     val newReleases = MutableStateFlow<Load<List<HomeItem>>>(Load.Loading)
 
@@ -107,11 +181,13 @@ class SearchViewModel(
     val query = MutableStateFlow("")
     val scope = MutableStateFlow(SearchScope.Songs)
     val categories = MutableStateFlow<Load<Mood>>(Load.Loading)
+    val history = MutableStateFlow<List<String>>(emptyList())
     private val _results = MutableStateFlow<Load<SearchResults>?>(null)
     val results: StateFlow<Load<SearchResults>?> = _results.asStateFlow()
 
     init {
         loadInto(categories) { home.getMoodAndMomentsData() }
+        loadHistory()
         viewModelScope.launch {
             combine(query.debounce(350), scope) { q, s -> q.trim() to s }.collectLatest { (q, s) ->
                 if (q.isEmpty()) {
@@ -129,6 +205,28 @@ class SearchViewModel(
             }
         }
     }
+
+    // shortcut: the DAO has no ORDER BY; REPLACE re-inserts a repeat with a new rowid, so rowid order is oldest first. Add ORDER BY rowid if that ever changes.
+    private fun loadHistory() =
+        viewModelScope.launch {
+            history.value = search.getSearchHistory().firstOrNull().orEmpty().map { it.query }.reversed().take(10)
+        }
+
+    /** Remembers the current query, on the keyboard's Search key or a tapped result. */
+    fun saveQuery() {
+        val q = query.value.trim()
+        if (q.isEmpty()) return
+        viewModelScope.launch {
+            search.insertSearchHistory(SearchHistory(q)).first()
+            loadHistory()
+        }
+    }
+
+    fun clearHistory() =
+        viewModelScope.launch {
+            search.deleteSearchHistory()
+            history.value = emptyList()
+        }
 
     private fun <A, B> Load<A>.map(f: (A) -> B): Load<B> =
         when (this) {
@@ -148,7 +246,8 @@ class LibraryViewModel(
 
     val liked: StateFlow<List<SongEntity>> = songs.getLikedSongs().state(emptyList())
     val downloaded: StateFlow<List<SongEntity>> = songs.getDownloadedSongs().map { it.orEmpty() }.state(emptyList())
-    val recent: StateFlow<List<SongEntity>> = songs.getMostPlayedSongs().state(emptyList())
+    val mostPlayed: StateFlow<List<SongEntity>> = songs.getMostPlayedSongs().state(emptyList())
+    val recentlyPlayed: StateFlow<List<SongEntity>> = songs.recentlyPlayed().state(emptyList())
     val savedAlbums: StateFlow<List<AlbumEntity>> = albums.getLikedAlbums().state(emptyList())
     val savedPlaylists: StateFlow<List<PlaylistEntity>> = playlists.getLikedPlaylists().state(emptyList())
     val followedArtists: StateFlow<List<ArtistEntity>> = artists.getFollowedArtists().state(emptyList())

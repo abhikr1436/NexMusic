@@ -25,6 +25,7 @@ import com.nexmusic.app.ui.BottomChromePadding
 import com.maxrave.domain.utils.toTrack
 import com.nexmusic.app.island.DynamicIsland
 import com.nexmusic.app.ui.LocalNavigator
+import com.nexmusic.app.ui.rememberTabListState
 import com.nexmusic.app.ui.components.CapsuleButton
 import com.nexmusic.app.ui.components.CoverCard
 import com.nexmusic.app.ui.components.DownloadButton
@@ -44,6 +45,7 @@ import com.nexmusic.app.ui.icon.Person
 import com.nexmusic.app.ui.icon.PlayArrow
 import com.nexmusic.app.ui.icon.QueueMusic
 import com.nexmusic.app.ui.icon.Shuffle
+import com.nexmusic.app.ui.icon.TrendingUp
 import com.nexmusic.app.ui.theme.IosGreen
 import org.koin.androidx.compose.koinViewModel
 
@@ -59,7 +61,8 @@ private val kinds =
         Kind("albums", "Albums"),
         Kind("songs", "Songs"),
         Kind("downloaded", "Downloaded"),
-        Kind("recent", "Most Played"),
+        Kind("recentlyPlayed", "Recently Played"),
+        Kind("mostPlayed", "Most Played"),
     )
 
 @Composable
@@ -68,14 +71,14 @@ fun LibraryScreen() {
     val albums by vm.savedAlbums.collectAsStateWithLifecycle()
     val playlists by vm.savedPlaylists.collectAsStateWithLifecycle()
     val navigator = LocalNavigator.current
-    val icons = listOf(NexIcons.QueueMusic, NexIcons.Person, NexIcons.Album, NexIcons.MusicNote, NexIcons.Downloaded, NexIcons.History)
+    val icons = listOf(NexIcons.QueueMusic, NexIcons.Person, NexIcons.Album, NexIcons.MusicNote, NexIcons.Downloaded, NexIcons.History, NexIcons.TrendingUp)
 
     // Albums and playlists the user added, newest first, as one "Recently Added" grid.
     val recentlyAdded =
         (albums.map { Triple(it.inLibrary, it) { navigator.album(it.browseId) } } + playlists.map { Triple(it.inLibrary, it) { navigator.playlist(it.id) } })
             .sortedByDescending { it.first }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = BottomChromePadding)) {
+    LazyColumn(Modifier.fillMaxSize(), state = rememberTabListState("library"), contentPadding = PaddingValues(bottom = BottomChromePadding)) {
         item { Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars)) }
         item { LargeTitle("Library") }
         kinds.forEachIndexed { i, k -> item { ListLink(icons[i], k.title) { navigator.library(k.route) } } }
@@ -117,7 +120,8 @@ fun LibraryListScreen(kind: String) {
     val playlists by vm.savedPlaylists.collectAsStateWithLifecycle()
     val liked by vm.liked.collectAsStateWithLifecycle()
     val downloaded by vm.downloaded.collectAsStateWithLifecycle()
-    val recent by vm.recent.collectAsStateWithLifecycle()
+    val recentlyPlayed by vm.recentlyPlayed.collectAsStateWithLifecycle()
+    val mostPlayed by vm.mostPlayed.collectAsStateWithLifecycle()
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = BottomChromePadding)) {
         item { Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars)) }
@@ -144,9 +148,10 @@ fun LibraryListScreen(kind: String) {
                     when (kind) {
                         "songs" -> liked
                         "downloaded" -> downloaded
-                        else -> recent
+                        "recentlyPlayed" -> recentlyPlayed
+                        else -> mostPlayed
                     }
-                songs(list, title)
+                songs(list, title, if (kind == "songs" || kind == "downloaded") "Nothing here yet. Tap ♥ on a song to love it." else "Songs you play show up here.")
             }
         }
     }
@@ -155,9 +160,10 @@ fun LibraryListScreen(kind: String) {
 private fun androidx.compose.foundation.lazy.LazyListScope.songs(
     list: List<SongEntity>,
     title: String,
+    empty: String,
 ) {
     if (list.isEmpty()) {
-        item { Message("Nothing here yet. Tap ♥ on a song to love it.") }
+        item { Message(empty) }
         return
     }
     item {
@@ -171,6 +177,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.songs(
     items(list.size) { i ->
         val navigator = LocalNavigator.current
         val s = list[i]
-        SongRow(s.title, s.artistName?.joinToString(), s.thumbnails?.hiRes(), onClick = { navigator.player.playList(list.toArrayListTrack(), i, title, null) }, trailing = { DownloadButton(s.toTrack()) })
+        val track = s.toTrack()
+        SongRow(s.title, s.artistName?.joinToString(), s.thumbnails?.hiRes(), onClick = { navigator.player.playList(list.toArrayListTrack(), i, title, null) }, trailing = { DownloadButton(track) }, menu = track)
     }
 }

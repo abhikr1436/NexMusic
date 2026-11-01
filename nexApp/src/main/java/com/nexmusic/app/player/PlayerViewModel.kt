@@ -182,7 +182,19 @@ class PlayerViewModel(
         viewModelScope.launch { handler.loadMediaItem(track, type, index) }
     }
 
-    fun playNext(track: Track) = viewModelScope.launch { handler.playNext(track) }
+    private val idle get() = nowPlaying.value.mediaItem.mediaId.isEmpty()
+
+    /** Right after the current song; with nothing loaded it just plays. */
+    fun playNext(track: Track) {
+        if (idle) return playList(listOf(track), 0, track.title, null)
+        viewModelScope.launch { handler.playNext(track) }
+    }
+
+    /** At the end of the queue; with nothing loaded it just plays. */
+    fun addToQueue(track: Track) {
+        if (idle) return playList(listOf(track), 0, track.title, null)
+        viewModelScope.launch { handler.loadMoreCatalog(arrayListOf(track), isAddToQueue = true) }
+    }
 
     fun playQueueItem(index: Int) = handler.playMediaItemInMediaSource(index)
 
