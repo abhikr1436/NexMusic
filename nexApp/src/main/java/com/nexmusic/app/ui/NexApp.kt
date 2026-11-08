@@ -5,7 +5,16 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -283,40 +292,94 @@ private fun TabBar(
             .height(62.dp)
             .liquidGlass(backdrop, Capsule(), exported = bar),
     ) {
+        val select = { tab: Tab ->
+            when {
+                current == tab.route -> navigator.reselected.tryEmit(tab.route)
+                // Inside this tab with a page pushed on top: back to the tab's root, like iOS.
+                lastTab == tab.route -> nav.popBackStack(tab.route, inclusive = false)
+                else ->
+                    nav.navigate(tab.route) {
+                        // Every tab opens on its root, never on the page left open in it.
+                        popUpTo(nav.graph.findStartDestination().id)
+                        launchSingleTop = true
+                    }
+            }
+            Unit
+        }
         val inset = 4.dp
         val slot = (maxWidth - inset * 2) / Tab.entries.size
-        val x by animateDpAsState(inset + slot * index, spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow), label = "tabLens")
+        val insetPx = with(LocalDensity.current) { inset.toPx() }
+        val slotPx = with(LocalDensity.current) { slot.toPx() }
+        // Lens position in tabs (0 = Home), so it is independent of screen width.
+        val lensX = remember { Animatable(index.toFloat()) }
+        var dragging by remember { mutableStateOf(false) }
+        val scope = rememberCoroutineScope()
+        val settle = spring<Float>(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow)
+        LaunchedEffect(index) { if (!dragging) lensX.animateTo(index.toFloat(), settle) }
+        // iOS lifts the lens while it is held, and it stretches the way it moves.
+        val grow by animateFloatAsState(if (dragging) 1.14f else 1f, spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMedium), label = "lensGrow")
+        val currentIndex by rememberUpdatedState(index)
+        val currentSelect by rememberUpdatedState(select)
+        val hovered = if (dragging) lensX.value.roundToInt() else index
         Box(
             Modifier
-                .offset(x = x, y = inset)
+                .offset { IntOffset((insetPx + lensX.value * slotPx).roundToInt(), insetPx.roundToInt()) }
                 .size(slot, maxHeight - inset * 2)
                 .drawBackdrop(
                     backdrop = bar,
                     shape = { Capsule() },
                     effects = { lens(10.dp.toPx(), 20.dp.toPx(), chromaticAberration = true) },
-                    onDrawSurface = { drawRect(nex.label.copy(alpha = 0.07f)) },
+                    layerBlock = {
+                        val stretch = (abs(lensX.velocity) / 40f).coerceAtMost(0.12f)
+                        scaleX = grow + stretch
+                        scaleY = grow - stretch / 2
+                    },
+                    onDrawSurface = { drawRect(nex.label.copy(alpha = if (dragging) 0.12f else 0.07f)) },
                 ),
         )
-        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-            Tab.entries.forEach { tab ->
-                val selected = lastTab == tab.route
+        Row(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(slotPx) {
+                    val last = Tab.entries.lastIndex.toFloat()
+                    var target = 0f
+                    // Chasing the finger with a stiff spring (not snapping) keeps the lens fluid, like liquid.
+                    val follow = spring<Float>(dampingRatio = 0.8f, stiffness = Spring.StiffnessHigh)
+                    fun under(x: Float) = ((x - insetPx) / slotPx - 0.5f).coerceIn(0f, last)
+                    detectHorizontalDragGestures(
+                        onDragStart = { start ->
+                            dragging = true
+                            target = under(start.x)
+                            scope.launch { lensX.animateTo(target, follow) }
+                        },
+                        onHorizontalDrag = { change, dx ->
+                            change.consume()
+                            target = (target + dx / slotPx).coerceIn(0f, last)
+                            scope.launch { lensX.animateTo(target, follow) }
+                        },
+                        onDragEnd = {
+                            dragging = false
+                            val to = target.roundToInt()
+                            scope.launch { lensX.animateTo(to.toFloat(), settle) }
+                            // Sliding back onto the open tab is not a re-tap: no scroll-to-top.
+                            if (to != currentIndex) currentSelect(Tab.entries[to])
+                        },
+                        onDragCancel = {
+                            dragging = false
+                            scope.launch { lensX.animateTo(currentIndex.toFloat(), settle) }
+                        },
+                    )
+                },
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Tab.entries.forEachIndexed { i, tab ->
+                val selected = hovered == i
                 Column(
                     Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                            when {
-                                current == tab.route -> navigator.reselected.tryEmit(tab.route)
-                                // Inside this tab with a page pushed on top: back to the tab's root, like iOS.
-                                selected -> nav.popBackStack(tab.route, inclusive = false)
-                                else ->
-                                    nav.navigate(tab.route) {
-                                        // Every tab opens on its root, never on the page left open in it.
-                                        popUpTo(nav.graph.findStartDestination().id)
-                                        launchSingleTop = true
-                                    }
-                            }
-                        },
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { select(tab) },
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {

@@ -259,6 +259,9 @@ private fun provideResolvingDataSourceFactory(
         Logger.d("Stream", mediaId)
         Logger.d("Stream", mediaId.startsWith(MERGING_DATA_TYPE.VIDEO).toString())
         if (downloadCache.isFullyCached(mediaId, dataSpec.position)) {
+            // Imported phone files (nexApp's LOCAL_PREFIX): no YouTube format to refresh, and no chunk cap. MP3/WAV/OGG
+            // extractors read a chunk's end as the end of the song, so a 5 MiB cap went silent ~2 min in.
+            if (mediaId.startsWith("local-")) return@Factory dataSpec
             // Only on the first chunk: the subrange below makes the resolver run once per
             // chunk, and updateFormat is a fire-and-forget youTube.player() call with no
             // in-flight dedup, so leaving it ungated would fan out one request per 5 MiB.
