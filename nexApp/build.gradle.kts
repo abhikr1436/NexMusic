@@ -102,6 +102,9 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.coroutines.android)
+    implementation(libs.glance.appwidget)
+    // Glance brings work-runtime 2.8 and media3-exoplayer-workmanager an old 2.7 -ktx; one version for both.
+    implementation(libs.work.runtime.ktx)
 
     // Already in the APK via :media3; needed here to write imported files into the download cache.
     implementation(libs.media3.exoplayer)

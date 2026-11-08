@@ -1,0 +1,17 @@
+<!-- Liquid Glass: the wallpaper shows through a faint tint, lit from the top-left, with a bright rim.
+     A slight dark lean at the bottom keeps the white text readable on light wallpapers. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient android:angle="315" android:startColor="#4DFFFFFF" android:centerColor="#1FFFFFFF" android:endColor="#2E000000" />
+            <corners android:radius="24dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <gradient android:angle="270" android:startColor="#33FFFFFF" android:centerColor="#00FFFFFF" android:endColor="#00FFFFFF" />
+            <corners android:radius="24dp" />
+            <stroke android:width="1dp" android:color="#80FFFFFF" />
+        </shape>
+    </item>
+</layer-list>

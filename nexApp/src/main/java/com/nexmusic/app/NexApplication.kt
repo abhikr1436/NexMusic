@@ -8,6 +8,8 @@ import com.nexmusic.app.di.nexModule
 import org.koin.android.ext.koin.androidContext
 import com.nexmusic.app.sync.AccountSync
 import com.nexmusic.app.update.AppUpdater
+import com.nexmusic.app.widget.startWidgetUpdates
+import kotlinx.coroutines.MainScope
 import org.koin.core.context.GlobalContext
 import org.koin.core.context.loadKoinModules
 import org.koin.core.context.startKoin
@@ -32,5 +34,6 @@ class NexApplication : Application() {
         GlobalContext.get().get<AccountSync>().start()
         // One quiet look at GitHub per launch, so Library can say when an update is waiting.
         GlobalContext.get().get<AppUpdater>().check()
+        startWidgetUpdates(this, MainScope())
     }
 }
