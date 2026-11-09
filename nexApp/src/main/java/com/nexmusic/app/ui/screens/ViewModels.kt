@@ -11,6 +11,7 @@ import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.model.browse.album.AlbumBrowse
 import com.maxrave.domain.data.model.browse.artist.ArtistBrowse
 import com.maxrave.domain.data.model.browse.playlist.PlaylistBrowse
+import com.maxrave.domain.data.model.home.Content
 import com.maxrave.domain.data.model.home.HomeItem
 import com.maxrave.domain.data.model.mood.Mood
 import com.maxrave.domain.data.model.mood.moodmoments.MoodsMomentObject
@@ -120,7 +121,7 @@ class HomeViewModel(
     private val songs: SongRepository,
     private val artists: ArtistRepository,
     private val search: SearchRepository,
-    taste: TasteStore,
+    private val taste: TasteStore,
 ) : ViewModel() {
     /** Artists picked on first launch, shown as a row on Home. */
     val yourArtists: StateFlow<List<PickedArtist>> = taste.artists
@@ -141,10 +142,13 @@ class HomeViewModel(
         songs.recentlyPlayed().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Taste = the last 100 songs played, weighted by plays, plus loved songs (a heart counts as 3 plays). */
-    val madeForYou: StateFlow<List<Mix>> =
+    private val favourites: Flow<List<SongEntity>> =
         combine(recentlyPlayed, songs.onSongChange { songs.getLikedSongs() }) { played, liked ->
             (played + liked).distinctBy { it.videoId }.sortedByDescending { it.totalPlayTime + if (it.liked) 3 else 0 }
         }
+
+    val madeForYou: StateFlow<List<Mix>> =
+        favourites
             // Re-fetch only when the favourites change, not on every play.
             .distinctUntilChangedBy { top -> top.take(5).map { it.videoId } }
             .mapLatest { mixes(it) }
@@ -215,7 +219,61 @@ class HomeViewModel(
         ) + stations
     }
 
-    val feed = MutableStateFlow<Load<List<HomeItem>>>(Load.Loading)
+    private val homeFeed = MutableStateFlow<Load<List<HomeItem>>>(Load.Loading)
+
+    /**
+     * Quick Picks from the user's taste, not YouTube's signed-out feed (which follows the region): radio of their top
+     * songs, top songs of the artists they picked, and hits in their languages, taking turns. Null while loading.
+     */
+    private val quickPicks: StateFlow<List<Content>?> =
+        combine(favourites.map { top -> top.take(3).map { it.videoId } }.distinctUntilChanged(), taste.artists, taste.languages) { seeds, picks, langs ->
+            Triple(seeds, picks, langs)
+        }.mapLatest { (seeds, picks, langs) -> tastePicks(seeds, picks, langs) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** YouTube's Home feed with its Quick Picks swapped for [quickPicks]; YouTube's are kept only when there's no taste to go on. */
+    val feed: StateFlow<Load<List<HomeItem>>> =
+        combine(homeFeed, quickPicks) { f, picks ->
+            if (f !is Load.Ready) return@combine f
+            Load.Ready(
+                f.value.mapNotNull { s ->
+                    when {
+                        !s.isQuickPicks() -> s
+                        picks == null -> null // hidden until ours arrive, so YouTube's never flash up
+                        picks.isEmpty() -> s
+                        else -> s.copy(contents = picks, moreEndpoint = null, playAllEndpoint = null)
+                    }
+                },
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), Load.Loading)
+
+    private fun HomeItem.isQuickPicks() = itemsPerColumn != null && title.contains("quick pick", ignoreCase = true)
+
+    private suspend fun tastePicks(
+        seeds: List<String>,
+        picks: List<PickedArtist>,
+        langs: List<String>,
+    ): List<Content> =
+        coroutineScope {
+            val radio = seeds.map { id -> async { runCatching { songs.getRelatedData(id).firstOrNull()?.data?.first }.getOrNull().orEmpty() } }
+            val fromArtists =
+                picks.shuffled().take(4).map { a ->
+                    async { runCatching { artists.getArtistData(a.id).first().data?.songs?.results }.getOrNull().orEmpty().map { it.toTrack() } }
+                }
+            val fromLanguages =
+                langs.take(2).map { l ->
+                    async { runCatching { search.getSearchDataSong("top $l songs").first().data }.getOrNull().orEmpty().map { it.toTrack() } }
+                }
+            (radio + fromArtists + fromLanguages)
+                .awaitAll()
+                .flatMap { it.withIndex() }
+                .sortedBy { it.index }
+                .map { it.value }
+                .filter { it.videoId !in seeds }
+                .distinctBy { it.videoId }
+                .take(20)
+                .map { it.toContent() }
+        }
     val newReleases = MutableStateFlow<Load<List<HomeItem>>>(Load.Loading)
 
     // Home and New each own an instance; each loads only the feed it shows.
@@ -233,7 +291,7 @@ class HomeViewModel(
     fun refreshNew() = loadInto(newReleases) { home.getNewRelease("New Releases", "New Music Videos") }
 
     fun refresh() =
-        loadInto(feed) {
+        loadInto(homeFeed) {
             home.getHomeData(viewString = "views", songString = "Song").map { r ->
                 if (r is Resource.Success) Resource.Success(r.data!!.second) else Resource.Error(r.message ?: "Couldn't load")
             }
@@ -508,3 +566,19 @@ class DetailViewModel(
         }
     }
 }
+
+private fun Track.toContent() =
+    Content(
+        album = album,
+        artists = artists,
+        description = null,
+        isExplicit = isExplicit,
+        playlistId = null,
+        browseId = null,
+        thumbnails = thumbnails.orEmpty(),
+        title = title,
+        videoId = videoId,
+        views = null,
+        durationSeconds = durationSeconds,
+        videoType = videoType,
+    )
