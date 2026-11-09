@@ -30,6 +30,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -43,6 +48,7 @@ import com.nexmusic.app.R
 import com.nexmusic.app.taste.TasteStore
 import com.nexmusic.app.taste.ThemeMode
 import com.nexmusic.app.ui.components.pressable
+import com.nexmusic.app.ui.theme.Accent
 import com.nexmusic.app.ui.theme.LocalBackdrop
 import com.nexmusic.app.ui.theme.LocalNex
 import com.nexmusic.app.ui.theme.NexTheme
@@ -70,16 +76,20 @@ class WidgetConfigActivity : ComponentActivity() {
                     ThemeMode.Dark -> true
                 }
             val backdrop by taste.backdrop.collectAsState()
-            NexTheme(dark, backdrop) { Picker { choose(widgetId, it) } }
+            NexTheme(dark, backdrop) { Picker { theme, glass -> choose(widgetId, theme, glass) } }
         }
     }
 
     private fun choose(
         widgetId: Int,
         theme: WidgetTheme,
+        glass: GlassLevel,
     ) = lifecycleScope.launch {
         val glanceId = GlanceAppWidgetManager(this@WidgetConfigActivity).getGlanceIdBy(widgetId)
-        updateAppWidgetState(this@WidgetConfigActivity, glanceId) { it[WidgetTheme.KEY] = theme.name }
+        updateAppWidgetState(this@WidgetConfigActivity, glanceId) {
+            it[WidgetTheme.KEY] = theme.name
+            it[GlassLevel.KEY] = glass.name
+        }
         NexWidget().update(this@WidgetConfigActivity, glanceId)
         setResult(RESULT_OK, Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId))
         finish()
@@ -87,11 +97,13 @@ class WidgetConfigActivity : ComponentActivity() {
 }
 
 @Composable
-private fun Picker(onPick: (WidgetTheme) -> Unit) {
+private fun Picker(onPick: (WidgetTheme, GlassLevel) -> Unit) {
     val nex = LocalNex.current
+    var glass by remember { mutableStateOf(GlassLevel.Liquid) }
     Column(
         Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .background(LocalBackdrop.current)
             .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(horizontal = 20.dp),
@@ -102,9 +114,30 @@ private fun Picker(onPick: (WidgetTheme) -> Unit) {
         Spacer(Modifier.height(20.dp))
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             WidgetTheme.entries.forEach { theme ->
-                Column(Modifier.fillMaxWidth().pressable { onPick(theme) }) {
-                    Preview(theme)
-                    Text(theme.label, style = NexType.Headline, color = nex.label, modifier = Modifier.padding(top = 6.dp, start = 4.dp))
+                Column(Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth().pressable { onPick(theme, glass) }) {
+                        Preview(theme, glass)
+                        Text(theme.label, style = NexType.Headline, color = nex.label, modifier = Modifier.padding(top = 6.dp, start = 4.dp))
+                    }
+                    if (theme == WidgetTheme.Glass) {
+                        Text("Strength, then tap the preview", style = NexType.Footnote, color = nex.secondaryLabel, modifier = Modifier.padding(top = 2.dp, start = 4.dp))
+                        Spacer(Modifier.height(8.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            GlassLevel.entries.forEach { level ->
+                                val on = level == glass
+                                Box(
+                                    Modifier
+                                        .weight(1f)
+                                        .background(if (on) Accent else nex.label.copy(alpha = 0.08f), RoundedCornerShape(50))
+                                        .pressable { glass = level }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(level.label, style = NexType.Subhead, color = if (on) Color.White else nex.label)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -113,7 +146,10 @@ private fun Picker(onPick: (WidgetTheme) -> Unit) {
 
 /** A medium widget drawn over a sample wallpaper, so the glass has something to show through. */
 @Composable
-private fun Preview(theme: WidgetTheme) {
+private fun Preview(
+    theme: WidgetTheme,
+    glass: GlassLevel,
+) {
     val shape = RoundedCornerShape(24.dp)
     Box(
         Modifier
@@ -129,6 +165,7 @@ private fun Preview(theme: WidgetTheme) {
                 WidgetTheme.Glass ->
                     Modifier
                         .background(Brush.linearGradient(listOf(Color(0x4DFFFFFF), Color(0x1FFFFFFF), Color(0x2E000000))), shape)
+                        .background(glass.tint, shape)
                         .border(1.dp, Color(0x80FFFFFF), shape)
             }
         Row(Modifier.fillMaxSize().then(panel).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {

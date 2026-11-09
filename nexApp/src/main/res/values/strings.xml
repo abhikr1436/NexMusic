@@ -4,6 +4,7 @@
     <string name="notification_channel_name" translatable="false">NexMusic playback</string>
     <string name="widget_small">Now Playing (Small)</string>
     <string name="widget_medium">Now Playing</string>
+    <string name="widget_wide">Now Playing (Wide)</string>
     <string name="widget_large">Now Playing (Large)</string>
     <string name="widget_desc">See what\'s playing and control it from your home screen.</string>
 </resources>

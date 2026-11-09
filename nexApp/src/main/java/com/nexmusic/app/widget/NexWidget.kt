@@ -91,6 +91,30 @@ enum class WidgetTheme(
     }
 }
 
+/**
+ * How strong the Liquid Glass look is, Frosted → Liquid. Widgets can't blur the wallpaper, so "frost" is a
+ * smoky tint over the clear glass; dark rather than milky so the white text stays readable.
+ */
+enum class GlassLevel(
+    val label: String,
+    val frost: Float,
+) {
+    Frosted("Frosted", 0.6f),
+    Misty("Misty", 0.4f),
+    Clear("Clear", 0.2f),
+    Liquid("Liquid", 0f),
+    ;
+
+    val tint get() = Color(0xFF2C2C30).copy(alpha = frost)
+
+    companion object {
+        val KEY = stringPreferencesKey("glass")
+
+        // Liquid is how glass widgets looked before the setting existed.
+        fun of(name: String?) = entries.firstOrNull { it.name == name } ?: Liquid
+    }
+}
+
 
 class NexWidget : GlanceAppWidget() {
     // Exact, not Responsive: the layouts size their artwork from the real cell size, which varies a lot by launcher.
@@ -112,8 +136,10 @@ class NexWidget : GlanceAppWidget() {
                 value = artUrl?.let { loadArt(context, it) }
             }
             val playing = now.mediaItem.mediaId.isNotEmpty()
+            val prefs = currentState<Preferences>()
             WidgetContent(
-                theme = WidgetTheme.of(currentState<Preferences>()[WidgetTheme.KEY]),
+                theme = WidgetTheme.of(prefs[WidgetTheme.KEY]),
+                glass = GlassLevel.of(prefs[GlassLevel.KEY]),
                 state =
                     NowPlaying(
                         title = if (playing) meta.title.orEmpty() else "Not Playing",
@@ -161,6 +187,7 @@ private data class NowPlaying(
 @Composable
 private fun WidgetContent(
     theme: WidgetTheme,
+    glass: GlassLevel,
     state: NowPlaying,
 ) {
     val size = LocalSize.current
@@ -172,10 +199,20 @@ private fun WidgetContent(
             .cornerRadius(24.dp)
             .clickable(actionStartActivity<MainActivity>()),
     ) {
-        when {
-            size.width >= 220.dp && size.height >= 300.dp -> Large(theme, state)
-            size.width >= 220.dp -> Medium(theme, state)
-            else -> Small(theme, state)
+        val frost =
+            if (theme == WidgetTheme.Glass && glass.frost > 0f) {
+                // A tinted copy of the rounded light panel, so the frost keeps the corners below API 31 too.
+                GlanceModifier.background(ImageProvider(R.drawable.widget_bg_light), colorFilter = ColorFilter.tint(ColorProvider(glass.tint)))
+            } else {
+                GlanceModifier
+            }
+        Box(frost.fillMaxSize()) {
+            when {
+                size.height < 100.dp -> Wide(theme, state)
+                size.width >= 220.dp && size.height >= 300.dp -> Large(theme, state)
+                size.width >= 220.dp -> Medium(theme, state)
+                else -> Small(theme, state)
+            }
         }
     }
 }
@@ -217,6 +254,30 @@ private fun Medium(
             Spacer(GlanceModifier.height(10.dp))
             Controls(theme, s)
         }
+    }
+}
+
+/** One row (4×1): artwork, titles, controls. */
+@Composable
+private fun Wide(
+    theme: WidgetTheme,
+    s: NowPlaying,
+) {
+    val size = LocalSize.current
+    val inner = (size.height.value - 12).toInt()
+    Row(GlanceModifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Artwork only when the row is roomy enough to keep the titles readable.
+        if (size.width >= 200.dp && inner >= 28) {
+            Artwork(s.art, inner.coerceAtMost(64))
+            Spacer(GlanceModifier.width(10.dp))
+        }
+        Column(GlanceModifier.defaultWeight()) { Titles(theme, s) }
+        Spacer(GlanceModifier.width(8.dp))
+        Icon(R.drawable.widget_ic_skip_previous, "Previous", theme.text, actionRunCallback<SkipPrevious>(), 26)
+        Spacer(GlanceModifier.width(8.dp))
+        PlayButton(theme, s.isPlaying, inner.coerceIn(28, 40))
+        Spacer(GlanceModifier.width(8.dp))
+        Icon(R.drawable.widget_ic_skip_next, "Next", theme.text, actionRunCallback<SkipNext>(), 26)
     }
 }
 
@@ -386,12 +447,16 @@ fun startWidgetUpdates(
     }
 }
 
-// One receiver per size, so the widget picker lists Small, Medium and Large; all share the responsive layout.
+// One receiver per size, so the widget picker lists Small, Medium, Wide and Large; all share the responsive layout.
 class SmallWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = NexWidget()
 }
 
 class MediumWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = NexWidget()
+}
+
+class WideWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = NexWidget()
 }
 
