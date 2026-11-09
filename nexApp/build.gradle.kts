@@ -16,8 +16,8 @@ android {
         applicationId = "com.nexmusic.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.2.2"
+        versionCode = 8
+        versionName = "1.2.3"
     }
 
     // The UI is English only; this drops the core's translations of strings nothing shows.
