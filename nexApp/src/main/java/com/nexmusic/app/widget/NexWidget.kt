@@ -92,20 +92,22 @@ enum class WidgetTheme(
 }
 
 /**
- * How strong the Liquid Glass look is, Frosted → Liquid. Widgets can't blur the wallpaper, so "frost" is a
- * smoky tint over the clear glass; dark rather than milky so the white text stays readable.
+ * Glass opacity, 1 (most opaque) → 4 (fully clear): a flat white wash over the wallpaper, no rim or shading.
+ * Names are what existing widgets have stored, so they stay.
  */
 enum class GlassLevel(
     val label: String,
-    val frost: Float,
+    val opacity: Float,
+    // One drawable per level: Glance drops the alpha of a ColorFilter tint, so the wash can't be a tinted panel.
+    val background: Int,
 ) {
-    Frosted("Frosted", 0.6f),
-    Misty("Misty", 0.4f),
-    Clear("Clear", 0.2f),
-    Liquid("Liquid", 0f),
+    Frosted("1", 0.40f, R.drawable.widget_bg_glass_1),
+    Misty("2", 0.26f, R.drawable.widget_bg_glass_2),
+    Clear("3", 0.13f, R.drawable.widget_bg_glass_3),
+    Liquid("4", 0f, R.drawable.widget_bg_glass),
     ;
 
-    val tint get() = Color(0xFF2C2C30).copy(alpha = frost)
+    val tint get() = Color.White.copy(alpha = opacity)
 
     companion object {
         val KEY = stringPreferencesKey("glass")
@@ -195,24 +197,15 @@ private fun WidgetContent(
         GlanceModifier
             .fillMaxSize()
             .appWidgetBackground()
-            .background(ImageProvider(theme.background))
+            .background(ImageProvider(if (theme == WidgetTheme.Glass) glass.background else theme.background))
             .cornerRadius(24.dp)
             .clickable(actionStartActivity<MainActivity>()),
     ) {
-        val frost =
-            if (theme == WidgetTheme.Glass && glass.frost > 0f) {
-                // A tinted copy of the rounded light panel, so the frost keeps the corners below API 31 too.
-                GlanceModifier.background(ImageProvider(R.drawable.widget_bg_light), colorFilter = ColorFilter.tint(ColorProvider(glass.tint)))
-            } else {
-                GlanceModifier
-            }
-        Box(frost.fillMaxSize()) {
-            when {
-                size.height < 100.dp -> Wide(theme, state)
-                size.width >= 220.dp && size.height >= 300.dp -> Large(theme, state)
-                size.width >= 220.dp -> Medium(theme, state)
-                else -> Small(theme, state)
-            }
+        when {
+            size.height < 100.dp -> Wide(theme, state)
+            size.width >= 220.dp && size.height >= 300.dp -> Large(theme, state)
+            size.width >= 220.dp -> Medium(theme, state)
+            else -> Small(theme, state)
         }
     }
 }

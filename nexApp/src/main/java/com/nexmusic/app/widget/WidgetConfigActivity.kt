@@ -7,7 +7,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -120,7 +119,7 @@ private fun Picker(onPick: (WidgetTheme, GlassLevel) -> Unit) {
                         Text(theme.label, style = NexType.Headline, color = nex.label, modifier = Modifier.padding(top = 6.dp, start = 4.dp))
                     }
                     if (theme == WidgetTheme.Glass) {
-                        Text("Strength, then tap the preview", style = NexType.Footnote, color = nex.secondaryLabel, modifier = Modifier.padding(top = 2.dp, start = 4.dp))
+                        Text("Opacity: 1 is most solid, 4 is fully clear. Then tap the preview.", style = NexType.Footnote, color = nex.secondaryLabel, modifier = Modifier.padding(top = 2.dp, start = 4.dp))
                         Spacer(Modifier.height(8.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             GlassLevel.entries.forEach { level ->
@@ -163,10 +162,7 @@ private fun Preview(
                 WidgetTheme.Light -> Modifier.background(Color(0xF7FFFFFF), shape)
                 WidgetTheme.Dark -> Modifier.background(Color(0xF21C1C1E), shape)
                 WidgetTheme.Glass ->
-                    Modifier
-                        .background(Brush.linearGradient(listOf(Color(0x4DFFFFFF), Color(0x1FFFFFFF), Color(0x2E000000))), shape)
-                        .background(glass.tint, shape)
-                        .border(1.dp, Color(0x80FFFFFF), shape)
+                    Modifier.background(glass.tint, shape)
             }
         Row(Modifier.fillMaxSize().then(panel).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(82.dp).background(Color(0x338E8E93), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
@@ -184,7 +180,7 @@ private fun Preview(
                         when (theme) {
                             WidgetTheme.Light -> Modifier.background(Color.Black, CircleShape)
                             WidgetTheme.Dark -> Modifier.background(Color.White, CircleShape)
-                            WidgetTheme.Glass -> Modifier.background(Color(0x40FFFFFF), CircleShape).border(1.dp, Color(0x8CFFFFFF), CircleShape)
+                            WidgetTheme.Glass -> Modifier.background(Color(0x40FFFFFF), CircleShape)
                         }
                     Box(Modifier.size(36.dp).then(button), contentAlignment = Alignment.Center) {
                         Icon(painterResource(R.drawable.widget_ic_play_arrow), null, tint = theme.buttonIcon, modifier = Modifier.size(20.dp))
